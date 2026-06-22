@@ -133,21 +133,75 @@ function applyDirectM3OutputCap(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function findMatchingBraceIndex(source, open) {
+  if (source[open] !== "{") return -1;
+  let depth = 0;
+  let state = "code";
+  for (let i = open; i < source.length; i += 1) {
+    const char = source[i];
+    const next = source[i + 1];
+
+    if (state === "line-comment") {
+      if (char === "\n" || char === "\r") state = "code";
+      continue;
+    }
+    if (state === "block-comment") {
+      if (char === "*" && next === "/") {
+        state = "code";
+        i += 1;
+      }
+      continue;
+    }
+    if (state === "single" || state === "double" || state === "template") {
+      if (char === "\\") {
+        i += 1;
+        continue;
+      }
+      if ((state === "single" && char === "'") || (state === "double" && char === '"') || (state === "template" && char === "`")) {
+        state = "code";
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      state = "line-comment";
+      i += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      state = "block-comment";
+      i += 1;
+      continue;
+    }
+    if (char === "'") {
+      state = "single";
+      continue;
+    }
+    if (char === '"') {
+      state = "double";
+      continue;
+    }
+    if (char === "`") {
+      state = "template";
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function findFunctionRange(source, functionName) {
   const startMarker = `function ${functionName}(`;
   const start = source.indexOf(startMarker);
   if (start === -1) return null;
   const open = source.indexOf("{", start);
   if (open === -1) return null;
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    const char = source[i];
-    if (char === "{") depth += 1;
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return { start, end: i + 1 };
-    }
-  }
+  const close = findMatchingBraceIndex(source, open);
+  if (close !== -1) return { start, open, close, end: close + 1 };
   return null;
 }
 
@@ -287,16 +341,18 @@ function trimToolDefinitionForMax(input, output) {
 
 function insertToolDefinitionTrimCall(source) {
   if (source.includes("trimToolDefinitionForMax(input, output);")) return source;
-  const anchor = "    }\n  };\n}\nexport {";
-  if (!source.includes('"tool.definition": async (input, output) => {')) {
+  const startMarker = '"tool.definition": async (input, output) => {';
+  const start = source.indexOf(startMarker);
+  if (start === -1) {
     fail("insert tool-definition trim call: tool.definition hook not found");
   }
-  return replaceOnce(
-    source,
-    anchor,
-    "      trimToolDefinitionForMax(input, output);\n    }\n  };\n}\nexport {",
-    "insert tool-definition trim call"
-  );
+  const open = source.indexOf("{", start);
+  const close = findMatchingBraceIndex(source, open);
+  if (close === -1) fail("insert tool-definition trim call: tool.definition hook braces are unbalanced");
+  const lineStart = source.lastIndexOf("\n", close - 1) + 1;
+  const closeIndent = source.slice(lineStart, close).match(/^\s*/)?.[0] ?? "    ";
+  const callIndent = `${closeIndent}  `;
+  return `${source.slice(0, close)}${callIndent}trimToolDefinitionForMax(input, output);\n${source.slice(close)}`;
 }
 
 function applyToolDefinitionTrim(source, analysis) {
@@ -453,13 +509,16 @@ function applyStaticPromptCompaction(source, analysis) {
 
   if (!out.includes("prompt = compactBaseInstructionsForMax(prompt);")) {
     const anchor = '  prompt = prompt.replace(/\\n{3,}/g, "\\n\\n").trim();\n';
-    if (out.includes(anchor)) {
-      out = replaceOnce(
-        out,
+    const range = findFunctionRange(out, "transformSystemPrompt");
+    const fn = range ? out.slice(range.start, range.end) : "";
+    if (range && fn.includes(anchor)) {
+      const patched = replaceOnce(
+        fn,
         anchor,
         `${anchor}  if (promptSurfaceLimits().profile === "max") {\n    prompt = compactBaseInstructionsForMax(prompt);\n  }\n`,
         "insert base prompt compaction call"
       );
+      out = `${out.slice(0, range.start)}${patched}${out.slice(range.end)}`;
       changed.push("enabled base prompt compaction");
     } else {
       skipped.push("static prompt compaction skipped: normalized prompt anchor not found");
@@ -469,9 +528,12 @@ function applyStaticPromptCompaction(source, analysis) {
   if (!out.includes("compactSessionPromptForMax(sessionTypePrompt.trim())")) {
     const needle = "${sessionTypePrompt.trim()}";
     const replacement = '${promptSurfaceLimits().profile === "max" ? compactSessionPromptForMax(sessionTypePrompt.trim()) : sessionTypePrompt.trim()}';
-    const count = out.split(needle).length - 1;
+    const range = findFunctionRange(out, "transformSystemPrompt");
+    const fn = range ? out.slice(range.start, range.end) : "";
+    const count = fn.split(needle).length - 1;
     if (count === 1) {
-      out = out.replace(needle, replacement);
+      const patched = fn.replace(needle, replacement);
+      out = `${out.slice(0, range.start)}${patched}${out.slice(range.end)}`;
       changed.push("enabled session prompt compaction");
     } else {
       skipped.push(`static prompt compaction skipped: session prompt anchor count=${count}`);

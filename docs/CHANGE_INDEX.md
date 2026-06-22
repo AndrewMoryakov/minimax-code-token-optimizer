@@ -110,6 +110,14 @@ compatible bundles with recognizable `transformSystemPrompt` anchors. This is
 the most behavior-sensitive stage, so it is anchored narrowly and tested with a
 synthetic fixture.
 
+### Patcher Hardening
+
+The patcher now treats request diagnostics as part of the final patch
+classification, so `fully-patched` cannot hide a missing diagnostics stage. It
+also scopes tool-hook insertion and static prompt compaction to the intended
+bundle functions, and its brace matcher ignores braces inside strings and
+comments.
+
 ### Prompt Cache Markers
 
 Prompt-cache markers are applied in enforce mode, and provider 4xx errors retry

@@ -33,6 +33,7 @@ export const STAGES = [
   {
     id: "request-diagnostics",
     label: "Request section/tool diagnostics",
+    appliedByCurrentPatcher: true,
     markers: [
       ["sectionBytes", "sectionBytes"],
       ["largestTools", "largestTools"],

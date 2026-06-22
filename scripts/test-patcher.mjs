@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
+import { analyzeBundleFile, analyzeBundleSource } from "./lib/bundle-analysis.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-token-optimizer-"));
@@ -43,9 +43,10 @@ function readString(value) {
   return typeof value === "string" ? value : undefined;
 }
 function summarizeStringRequestBody(body) {
+  const braceInString = "this } brace must not terminate the function scan";
   const base = {
     bodyKind: "string",
-    bodyBytes: Buffer.byteLength(body, "utf8")
+    bodyBytes: Buffer.byteLength(body + braceInString.slice(0, 0), "utf8")
   };
   const parsed = JSON.parse(body);
   const tools = Array.isArray(parsed.tools) ? parsed.tools : undefined;
@@ -105,6 +106,12 @@ function plugin() {
     }
   };
 }
+function decoyPluginTail() {
+  return {
+    "other.definition": async () => {
+    }
+  };
+}
 export {
   plugin as default,
   injectDynamicBlocks,
@@ -153,6 +160,9 @@ assert.ok(firstReport.changes.includes("enabled session prompt compaction"));
 analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "fully-patched");
 assert.equal(analysis.finalPatchPresent, true);
+const missingDiagnosticsAnalysis = analyzeBundleSource(fs.readFileSync(fixturePath, "utf8").replaceAll("descriptionBytes", "descBytesMissingMarker"));
+assert.equal(missingDiagnosticsAnalysis.finalPatchPresent, false);
+assert.equal(missingDiagnosticsAnalysis.classification, "partially-patched");
 
 fs.appendFileSync(fixturePath, "\nexport { trimToolDefinitionForMax, promptUserProfileCapChars, promptMemoryTailCapChars, promptMemorySummaryCapChars };\n", "utf8");
 const patchedModule = await import(`${pathToFileURL(fixturePath).href}?v=${Date.now()}`);
@@ -200,6 +210,21 @@ assert.equal(toolOutput.parameters, params);
 assert.equal(toolOutput.parameters.annotations.marker, true);
 assert.ok(toolOutput.description.length < 140);
 assert.ok(toolOutput.parameters.properties.timeout.description.length < 120);
+const hookOutput = {
+  description: "Run shell commands. " + "very long guidance ".repeat(200),
+  parameters: {
+    properties: {
+      command: {
+        type: "string",
+        description: "command guidance ".repeat(80)
+      }
+    }
+  }
+};
+const hooks = patchedModule.default();
+await hooks["tool.definition"]({ toolID: "bash" }, hookOutput);
+assert.ok(hookOutput.description.length < 140);
+assert.ok(hookOutput.parameters.properties.command.description.length < 120);
 assert.equal(patchedModule.promptUserProfileCapChars(), 1200);
 assert.equal(patchedModule.promptMemoryTailCapChars(), 4500);
 assert.equal(patchedModule.promptMemorySummaryCapChars(), 1800);

@@ -77,21 +77,29 @@ function backupFile(filePath, label) {
     fs.mkdirSync(backupDir, { recursive: true });
     fs.copyFileSync(filePath, backup);
   }
-  return backup;
+  return { path: backup, created: !dryRun };
+}
+
+function logBackup(backup) {
+  if (!backup) return;
+  console.log(`${backup.created ? "backup" : "would_backup"}=${backup.path}`);
+}
+
+function pluginSourceNames() {
+  return ["openrouter-lifecycle.js", "prompt-cache.js"];
 }
 
 function installPlugins() {
   const sourceDir = path.join(repoRoot, "plugins");
   const targetDir = path.join(mavisRoot, "opencode", "plugins");
-  const names = ["openrouter-lifecycle.js", "prompt-cache.js"];
   console.log("Installing standalone plugins");
   if (!dryRun) fs.mkdirSync(targetDir, { recursive: true });
-  for (const name of names) {
+  for (const name of pluginSourceNames()) {
     const source = path.join(sourceDir, name);
     const dest = path.join(targetDir, name);
     if (!fs.existsSync(source)) fail(`plugin source missing: ${source}`);
     const backup = backupFile(dest, "before-token-optimizer");
-    if (backup) console.log(`backup=${backup}`);
+    logBackup(backup);
     if (!dryRun) fs.copyFileSync(source, dest);
     console.log(`${dryRun ? "would_install" : "installed"}=${dest}`);
   }
@@ -146,12 +154,36 @@ function mergePolicy() {
     return;
   }
   const backup = backupFile(policyPath, "before-token-optimizer");
-  if (backup) console.log(`backup=${backup}`);
+  logBackup(backup);
   if (!dryRun) {
     fs.mkdirSync(policyDir, { recursive: true });
     fs.writeFileSync(policyPath, after, "utf8");
   }
   console.log(`${dryRun ? "would_write_policy" : "wrote_policy"}=${policyPath}`);
+}
+
+function validateInstallPlan() {
+  if (!allowedProfiles.has(profile)) {
+    fail(`unsupported profile "${profile}". Expected one of: ${Array.from(allowedProfiles).join(", ")}`);
+  }
+  if (!skipPlugins) {
+    const sourceDir = path.join(repoRoot, "plugins");
+    for (const name of pluginSourceNames()) {
+      const source = path.join(sourceDir, name);
+      if (!fs.existsSync(source)) fail(`plugin source missing: ${source}`);
+    }
+  }
+  if (!skipPolicy) {
+    readJson(path.join(repoRoot, "examples", "policy.max-openrouter-lifecycle.json"));
+    const policyPath = path.join(mavisRoot, "context-budget", "config", "policy.json");
+    if (fs.existsSync(policyPath)) {
+      try {
+        readJson(policyPath);
+      } catch (err) {
+        fail(`policy exists but does not parse: ${policyPath}\n${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
 }
 
 console.log("MiniMax Code Token Optimizer installer");
@@ -168,6 +200,7 @@ if (!initial.bundle.exists || !initial.bundle.compatible) {
     "Run diagnose-install.mjs and do a compatibility pass for this MiniMax Code version."
   ].join("\n"));
 }
+validateInstallPlan();
 
 if (!skipBundle) {
   const patchArgs = [];
