@@ -128,7 +128,7 @@ function inspectPolicy() {
 }
 
 function inspectPlugins() {
-  const pluginNames = ["openrouter-lifecycle.js", "prompt-cache.js"];
+  const pluginNames = ["openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js"];
   return {
     dir: pluginsDir,
     exists: exists(pluginsDir),

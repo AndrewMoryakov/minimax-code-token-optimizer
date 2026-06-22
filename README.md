@@ -58,6 +58,7 @@ AGENT_INSTALL.md                   # shortest install instructions for AI agents
 plugins/
   openrouter-lifecycle.js       # lifecycle model routing plugin
   prompt-cache.js               # direct-M3 prompt cache marker plugin
+  prompt-surface.js             # standalone static prompt/MCP/skills reducer
 examples/
   policy.max-openrouter-lifecycle.json
 scripts/

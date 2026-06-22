@@ -110,6 +110,13 @@ compatible bundles with recognizable `transformSystemPrompt` anchors. This is
 the most behavior-sensitive stage, so it is anchored narrowly and tested with a
 synthetic fixture.
 
+### Standalone Prompt Surface Plugin
+
+`plugins/prompt-surface.js` is now redistributed with the installer. It reduces
+high-frequency `<available_skills>` and `<available_mcp_servers>` blocks from
+the OpenCode prompt surface, follows the same `max` / `medium` / `free` profile
+policy, and fails open if the prompt shape is not recognized.
+
 ### Patcher Hardening
 
 The patcher now treats request diagnostics as part of the final patch

@@ -86,7 +86,7 @@ function logBackup(backup) {
 }
 
 function pluginSourceNames() {
-  return ["openrouter-lifecycle.js", "prompt-cache.js"];
+  return ["openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js"];
 }
 
 function installPlugins() {

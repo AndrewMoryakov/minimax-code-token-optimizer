@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $sourceDir)) {
 
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
-$plugins = @("openrouter-lifecycle.js", "prompt-cache.js")
+$plugins = @("openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js")
 foreach ($plugin in $plugins) {
   $source = Join-Path $sourceDir $plugin
   $target = Join-Path $targetDir $plugin
@@ -32,4 +32,3 @@ foreach ($plugin in $plugins) {
   Copy-Item -LiteralPath $source -Destination $target -Force
   Write-Output "installed=$target"
 }
-
