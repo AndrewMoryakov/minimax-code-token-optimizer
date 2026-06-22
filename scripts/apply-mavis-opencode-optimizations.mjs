@@ -248,6 +248,95 @@ function applyRequestDiagnostics(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function toolDefinitionTrimHelpers() {
+  return `function trimSchemaDescriptionsForMax(value, maxLen = 80) {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) trimSchemaDescriptionsForMax(item, maxLen);
+    return value;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "description" && typeof child === "string") {
+      value[key] = compactDescription(child, maxLen);
+      continue;
+    }
+    trimSchemaDescriptionsForMax(child, maxLen);
+  }
+  return value;
+}
+function trimToolDefinitionForMax(input, output) {
+  if (promptSurfaceLimits().profile !== "max") return;
+  if (typeof output.description === "string") {
+    output.description = compactDescription(output.description, 180);
+  }
+  if (input.toolID === "bash") {
+    output.description = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
+  } else if (input.toolID === "skill") {
+    output.description = SKILL_TOOL_DESCRIPTION;
+  } else if (input.toolID === "todowrite") {
+    output.description = "Create or update the concise task checklist for this session.";
+  } else if (input.toolID === "ask_user") {
+    output.description = "Ask the user only when required to continue safely.";
+  } else if (input.toolID === "task") {
+    output.description = "Delegate a bounded task to another agent when it materially helps.";
+  }
+  trimSchemaDescriptionsForMax(output.parameters, 72);
+}
+`;
+}
+
+function insertToolDefinitionTrimCall(source) {
+  if (source.includes("trimToolDefinitionForMax(input, output);")) return source;
+  const anchor = "    }\n  };\n}\nexport {";
+  if (!source.includes('"tool.definition": async (input, output) => {')) {
+    fail("insert tool-definition trim call: tool.definition hook not found");
+  }
+  return replaceOnce(
+    source,
+    anchor,
+    "      trimToolDefinitionForMax(input, output);\n    }\n  };\n}\nexport {",
+    "insert tool-definition trim call"
+  );
+}
+
+function applyToolDefinitionTrim(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "tool-definition-trim") === "present") {
+    skipped.push("tool-definition trim already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function trimSchemaDescriptionsForMax(value")) {
+    out = replaceOnce(
+      out,
+      "function patchMiniMaxPromptCacheBody(bodyText) {",
+      `${toolDefinitionTrimHelpers()}function patchMiniMaxPromptCacheBody(bodyText) {`,
+      "insert tool-definition trim helpers"
+    );
+    changed.push("inserted tool-definition trim helpers");
+  }
+
+  if (!out.includes("function trimToolDefinitionForMax(input, output) {")) {
+    out = replaceOnce(
+      out,
+      "function patchMiniMaxPromptCacheBody(bodyText) {",
+      `${toolDefinitionTrimHelpers()}function patchMiniMaxPromptCacheBody(bodyText) {`,
+      "insert tool-definition trim function"
+    );
+    changed.push("inserted tool-definition trim function");
+  }
+
+  if (!out.includes("trimToolDefinitionForMax(input, output);")) {
+    out = insertToolDefinitionTrimCall(out);
+    changed.push("enabled tool-definition trim hook");
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function applyFinalToolDescriptionTrim(source, analysis) {
   let out = source;
   const changed = [];
@@ -364,7 +453,14 @@ function applyStages(source) {
     skipped: diagnostics.skipped
   });
   const afterDiagnosticsAnalysis = analyzeBundleSource(diagnostics.source);
-  const finalTrim = applyFinalToolDescriptionTrim(diagnostics.source, afterDiagnosticsAnalysis);
+  const toolDefinitionTrim = applyToolDefinitionTrim(diagnostics.source, afterDiagnosticsAnalysis);
+  stages.push({
+    id: "tool-definition-trim",
+    changed: toolDefinitionTrim.changed,
+    skipped: toolDefinitionTrim.skipped
+  });
+  const afterToolDefinitionTrimAnalysis = analyzeBundleSource(toolDefinitionTrim.source);
+  const finalTrim = applyFinalToolDescriptionTrim(toolDefinitionTrim.source, afterToolDefinitionTrimAnalysis);
   stages.push({
     id: "final-tool-description-trim",
     changed: finalTrim.changed,
@@ -373,8 +469,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis

@@ -43,10 +43,12 @@ export const STAGES = [
   {
     id: "tool-definition-trim",
     label: "Tool definition trim",
+    appliedByCurrentPatcher: true,
     markers: [
       ["trimToolDefinitionForMax", "function trimToolDefinitionForMax(input, output) {"],
       ["trimSchemaDescriptionsForMax", "function trimSchemaDescriptionsForMax(value"],
-      ["skillToolShortDescription", "output.description = SKILL_TOOL_DESCRIPTION"]
+      ["skillToolShortDescription", "output.description = SKILL_TOOL_DESCRIPTION"],
+      ["toolDefinitionTrimCall", "trimToolDefinitionForMax(input, output);"]
     ]
   },
   {

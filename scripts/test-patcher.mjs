@@ -62,7 +62,30 @@ function patchMiniMaxPromptCacheBody(bodyText) {
 }
 function injectDynamicBlocks() {}
 function transformSystemPrompt() {}
+function plugin() {
+  return {
+    "tool.definition": async (input, output) => {
+      if (input.toolID === "skill") {
+        output.description = SKILL_TOOL_DESCRIPTION;
+      }
+      if (input.toolID === "bash") {
+        output.description = output.description + " long bash guidance ".repeat(60);
+      }
+      if (input.toolID === "edit" || input.toolID === "write" || input.toolID === "read") {
+        const params = output.parameters;
+        const props = params?.properties;
+        if (props && !props.description) {
+          props.description = {
+            description: "Brief description of what this operation does",
+            type: "string"
+          };
+        }
+      }
+    }
+  };
+}
 export {
+  plugin as default,
   injectDynamicBlocks,
   summarizeStringRequestBody,
   transformSystemPrompt
@@ -97,11 +120,14 @@ assert.equal(firstReport.afterClassification, "fully-patched");
 assert.ok(firstReport.changes.includes("inserted direct M3 default max_tokens cap"));
 assert.ok(firstReport.changes.includes("enabled direct M3 max_tokens clamp"));
 assert.ok(firstReport.changes.includes("upgraded request section/tool diagnostics"));
+assert.ok(firstReport.changes.includes("inserted tool-definition trim helpers"));
+assert.ok(firstReport.changes.includes("enabled tool-definition trim hook"));
 
 analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "fully-patched");
 assert.equal(analysis.finalPatchPresent, true);
 
+fs.appendFileSync(fixturePath, "\nexport { trimToolDefinitionForMax };\n", "utf8");
 const patchedModule = await import(`${pathToFileURL(fixturePath).href}?v=${Date.now()}`);
 const patchedRequest = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
   max_tokens: 32000,
@@ -129,6 +155,24 @@ assert.equal(typeof diagnostic.sectionBytes.tools, "number");
 assert.equal(diagnostic.largestTools[0].descriptionBytes, Buffer.byteLength("verbose skill description", "utf8"));
 assert.equal(typeof diagnostic.largestTools[0].inputSchemaBytes, "number");
 assert.deepEqual(diagnostic.largestTools[0].propertyKeys, ["name"]);
+const params = {
+  annotations: { marker: true },
+  properties: {
+    timeout: {
+      type: "number",
+      description: "timeout guidance ".repeat(80)
+    }
+  }
+};
+const toolOutput = {
+  description: "Run shell commands. " + "very long guidance ".repeat(200),
+  parameters: params
+};
+patchedModule.trimToolDefinitionForMax({ toolID: "bash" }, toolOutput);
+assert.equal(toolOutput.parameters, params);
+assert.equal(toolOutput.parameters.annotations.marker, true);
+assert.ok(toolOutput.description.length < 140);
+assert.ok(toolOutput.parameters.properties.timeout.description.length < 120);
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);

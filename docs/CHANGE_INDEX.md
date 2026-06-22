@@ -90,6 +90,13 @@ The public patcher can upgrade compatible bundles to log request section sizes
 and detailed largest-tool diagnostics, including description bytes, schema
 bytes, enum counts, and property keys.
 
+### Tool Definition Trim
+
+The public patcher can add the schema-preserving `tool.definition` trim stage to
+compatible bundles. It shortens verbose tool descriptions and nested schema
+descriptions while preserving the original `output.parameters` object and its
+annotations.
+
 ### Prompt Cache Markers
 
 Prompt-cache markers are applied in enforce mode, and provider 4xx errors retry
