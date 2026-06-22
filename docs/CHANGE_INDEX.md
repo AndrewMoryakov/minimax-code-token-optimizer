@@ -84,6 +84,12 @@ The final patch trims final request-body `tools[].description` fields after
 OpenCode has built the JSON body. It preserves tool objects, input schemas, and
 schema annotations.
 
+### Request Diagnostics
+
+The public patcher can upgrade compatible bundles to log request section sizes
+and detailed largest-tool diagnostics, including description bytes, schema
+bytes, enum counts, and property keys.
+
 ### Prompt Cache Markers
 
 Prompt-cache markers are applied in enforce mode, and provider 4xx errors retry

@@ -133,6 +133,121 @@ function applyDirectM3OutputCap(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function findFunctionRange(source, functionName) {
+  const startMarker = `function ${functionName}(`;
+  const start = source.indexOf(startMarker);
+  if (start === -1) return null;
+  const open = source.indexOf("{", start);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return { start, end: i + 1 };
+    }
+  }
+  return null;
+}
+
+function replaceFunction(source, functionName, replacement) {
+  const range = findFunctionRange(source, functionName);
+  if (!range) fail(`replace ${functionName}: function not found or braces are unbalanced`);
+  return `${source.slice(0, range.start)}${replacement}${source.slice(range.end)}`;
+}
+
+function exportSymbolBefore(source, symbol, beforeSymbol) {
+  if (source.includes(`${symbol},`)) return source;
+  const pattern = new RegExp(`(^\\s*)${beforeSymbol}(,?)\\s*$`, "gm");
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) {
+    fail(`export ${symbol}: expected exactly one ${beforeSymbol} export anchor, found ${matches.length}`);
+  }
+  const indent = matches[0][1];
+  const comma = matches[0][2] || "";
+  return source.replace(pattern, `${indent}${symbol},\n${indent}${beforeSymbol}${comma}`);
+}
+
+function fullSummarizeStringRequestBodyFunction() {
+  return `function summarizeStringRequestBody(body) {
+  const base = {
+    bodyKind: "string",
+    bodyBytes: Buffer.byteLength(body, "utf8")
+  };
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return base;
+  }
+  const record3 = readRecord(parsed);
+  if (!record3) return base;
+  const tools = Array.isArray(record3.tools) ? record3.tools : void 0;
+  const toolsWithEagerInputStreaming = tools?.filter((tool2) => readRecord(tool2)?.eager_input_streaming === true).length ?? void 0;
+  const jsonBytes = (value) => {
+    try {
+      return Buffer.byteLength(JSON.stringify(value), "utf8");
+    } catch {
+      return void 0;
+    }
+  };
+  const largestTools = tools?.map((tool2) => {
+    const record4 = readRecord(tool2);
+    const inputSchema = readRecord(record4?.input_schema);
+    const schemaProps = readRecord(inputSchema?.properties);
+    const nameProp = readRecord(schemaProps?.name);
+    const nameEnum = Array.isArray(nameProp?.enum) ? nameProp.enum : void 0;
+    return {
+      name: readString(record4?.name) ?? "unknown",
+      bytes: jsonBytes(tool2) ?? 0,
+      descriptionBytes: typeof record4?.description === "string" ? Buffer.byteLength(record4.description, "utf8") : void 0,
+      inputSchemaBytes: jsonBytes(record4?.input_schema),
+      inputSchemaKeys: inputSchema ? Object.keys(inputSchema).sort() : void 0,
+      nameEnumCount: nameEnum?.length,
+      nameEnumBytes: nameEnum ? jsonBytes(nameEnum) : void 0,
+      propertyKeys: schemaProps ? Object.keys(schemaProps).sort() : void 0
+    };
+  }).sort((a, b) => b.bytes - a.bytes).slice(0, 5);
+  const toolChoice = readRecord(record3.tool_choice);
+  return {
+    ...base,
+    bodyTopLevelKeys: Object.keys(record3).sort(),
+    model: readString(record3.model),
+    stream: typeof record3.stream === "boolean" ? record3.stream : void 0,
+    toolChoiceType: readString(toolChoice?.type),
+    toolsCount: tools?.length,
+    toolsWithEagerInputStreaming,
+    sectionBytes: {
+      system: jsonBytes(record3.system),
+      messages: jsonBytes(record3.messages),
+      tools: jsonBytes(record3.tools)
+    },
+    largestTools
+  };
+}`;
+}
+
+function applyRequestDiagnostics(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "request-diagnostics") === "present") {
+    skipped.push("request diagnostics already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function summarizeStringRequestBody(body) {")) {
+    skipped.push("request diagnostics skipped: summarizeStringRequestBody not found");
+    return { source: out, changed, skipped };
+  }
+
+  out = replaceFunction(out, "summarizeStringRequestBody", fullSummarizeStringRequestBodyFunction());
+  changed.push("upgraded request section/tool diagnostics");
+  return { source: out, changed, skipped };
+}
+
 function applyFinalToolDescriptionTrim(source, analysis) {
   let out = source;
   const changed = [];
@@ -221,11 +336,10 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   }
 
   if (!out.includes("patchMiniMaxPromptCacheBody,")) {
-    out = replaceOnce(
+    out = exportSymbolBefore(
       out,
-      "  injectDynamicBlocks,\n  transformSystemPrompt",
-      "  injectDynamicBlocks,\n  patchMiniMaxPromptCacheBody,\n  transformSystemPrompt",
-      "export patchMiniMaxPromptCacheBody"
+      "patchMiniMaxPromptCacheBody",
+      "transformSystemPrompt"
     );
     changed.push("exported request-body patcher for smoke tests");
   }
@@ -243,7 +357,14 @@ function applyStages(source) {
     skipped: outputCap.skipped
   });
   const afterOutputCapAnalysis = analyzeBundleSource(outputCap.source);
-  const finalTrim = applyFinalToolDescriptionTrim(outputCap.source, afterOutputCapAnalysis);
+  const diagnostics = applyRequestDiagnostics(outputCap.source, afterOutputCapAnalysis);
+  stages.push({
+    id: "request-diagnostics",
+    changed: diagnostics.changed,
+    skipped: diagnostics.skipped
+  });
+  const afterDiagnosticsAnalysis = analyzeBundleSource(diagnostics.source);
+  const finalTrim = applyFinalToolDescriptionTrim(diagnostics.source, afterDiagnosticsAnalysis);
   stages.push({
     id: "final-tool-description-trim",
     changed: finalTrim.changed,
@@ -252,8 +373,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...diagnostics.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis

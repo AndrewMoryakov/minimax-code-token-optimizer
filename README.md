@@ -40,9 +40,9 @@ the result. That avoids shipping vendor code.
 
 The current public patcher expects the MiniMax bundle to already contain the
 base request-patching anchors used by our local build. It can add the direct M3
-output-cap stage and final tool-description trim to compatible bundles. If a
-future or older bundle lacks required anchors, the patcher aborts with a clear
-message instead of corrupting the install.
+output-cap stage, request diagnostics, and final tool-description trim to
+compatible bundles. If a future or older bundle lacks required anchors, the
+patcher aborts with a clear message instead of corrupting the install.
 
 ## Repository Contents
 
