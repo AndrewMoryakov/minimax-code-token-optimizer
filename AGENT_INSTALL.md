@@ -11,7 +11,7 @@ git clone https://github.com/AndrewMoryakov/minimax-code-token-optimizer.git
 cd minimax-code-token-optimizer
 ```
 
-2. Apply the guarded bundled-plugin patch.
+2. Run the one-command installer.
 
 First diagnose. Exit code `2` means the install is incomplete or incompatible;
 read `next_action`.
@@ -21,31 +21,42 @@ node .\scripts\diagnose-install.mjs
 ```
 
 ```powershell
-node .\scripts\apply-mavis-opencode-optimizations.mjs
+node .\scripts\install.mjs --profile max
 ```
 
-3. Install the standalone user plugins.
+The installer applies the guarded bundle patch, installs standalone plugins,
+merges the max-economy policy with a backup, and verifies the result.
+
+3. Optional: reload the worker.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-user-plugins.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\reload-opencode-worker.ps1
 ```
 
-4. Verify the installed patch.
+Or let the installer reload after verification:
+
+```powershell
+node .\scripts\install.mjs --profile max --reload
+```
+
+4. Manual verification.
 
 ```powershell
 node .\scripts\verify-installed.mjs
 node .\scripts\check-repo.mjs
 ```
 
-5. Reload the OpenCode worker.
+5. Manual fallback commands.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\reload-opencode-worker.ps1
+node .\scripts\apply-mavis-opencode-optimizations.mjs
+powershell -ExecutionPolicy Bypass -File .\scripts\install-user-plugins.ps1
 ```
 
 6. Optional: install the max-economy policy.
 
-Merge `examples\policy.max-openrouter-lifecycle.json` into:
+The installer does this automatically unless `--skip-policy` is used. Manual
+path: merge `examples\policy.max-openrouter-lifecycle.json` into:
 
 ```text
 %USERPROFILE%\.mavis\agents\mavis\context-budget\config\policy.json

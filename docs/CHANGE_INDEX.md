@@ -97,6 +97,7 @@ Status:
 Use:
 
 ```powershell
+node .\scripts\install.mjs --profile max
 node .\scripts\diagnose-install.mjs
 node .\scripts\verify-installed.mjs
 node .\scripts\check-repo.mjs
