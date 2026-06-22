@@ -271,6 +271,12 @@ savings are from reducing prompt, memory, skill, MCP, and tool payloads.
 - No API keys are included in this repository.
 - No full MiniMax vendor bundle is included.
 
+## Related
+
+Controlled Codex-to-MiniMax collaboration bridge and canary checks:
+
+https://github.com/AndrewMoryakov/mavis-minimax-bridge
+
 ## License
 
 MIT for the code in this repository. MiniMax Code and its bundled files remain
