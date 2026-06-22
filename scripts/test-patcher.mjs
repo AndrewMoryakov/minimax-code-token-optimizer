@@ -72,7 +72,17 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   return { body: JSON.stringify(parsed), details, changed, added: added + tools.added };
 }
 function injectDynamicBlocks() {}
-function transformSystemPrompt() {}
+function transformSystemPrompt(input) {
+  let prompt = input.agentInstructions?.trim() || input.systemPrompt?.trim() || "";
+  prompt = prompt.replace(/\\n{3,}/g, "\\n\\n").trim();
+  const sessionTypePrompt = input.sessionTypePrompt;
+  if (sessionTypePrompt?.trim()) {
+    prompt = \`\${prompt}
+
+\${sessionTypePrompt.trim()}\`;
+  }
+  return { systemPrompt: prompt, staticPrompt: prompt };
+}
 function plugin() {
   return {
     "tool.definition": async (input, output) => {
@@ -136,6 +146,9 @@ assert.ok(firstReport.changes.includes("enabled tool-definition trim hook"));
 assert.ok(firstReport.changes.includes("capped promptUserProfileCapChars for max profile"));
 assert.ok(firstReport.changes.includes("capped promptMemoryTailCapChars for max profile"));
 assert.ok(firstReport.changes.includes("capped promptMemorySummaryCapChars for max profile"));
+assert.ok(firstReport.changes.includes("inserted static prompt compaction helpers"));
+assert.ok(firstReport.changes.includes("enabled base prompt compaction"));
+assert.ok(firstReport.changes.includes("enabled session prompt compaction"));
 
 analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "fully-patched");
@@ -190,6 +203,14 @@ assert.ok(toolOutput.parameters.properties.timeout.description.length < 120);
 assert.equal(patchedModule.promptUserProfileCapChars(), 1200);
 assert.equal(patchedModule.promptMemoryTailCapChars(), 4500);
 assert.equal(patchedModule.promptMemorySummaryCapChars(), 1800);
+const transformed = patchedModule.transformSystemPrompt({
+  agentInstructions: "very long instructions ".repeat(500),
+  sessionTypePrompt: "branch session details ".repeat(100)
+});
+assert.ok(transformed.systemPrompt.includes("## Operating Rules"));
+assert.ok(transformed.systemPrompt.includes("## Session Role"));
+assert.ok(!transformed.systemPrompt.includes("very long instructions very long instructions very long instructions"));
+assert.ok(!transformed.systemPrompt.includes("branch session details branch session details branch session details"));
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);

@@ -383,6 +383,104 @@ function applyMemoryCaps(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function staticPromptCompactionHelpers() {
+  return `function compactBaseInstructionsForMax(prompt) {
+  if (!prompt?.trim()) return prompt;
+  return [
+    "# Role",
+    "",
+    "You are running inside MiniMax Code as the active coding agent.",
+    "",
+    "## Operating Rules",
+    "- When the goal is clear, act directly and keep the user looped in.",
+    "- For code changes, inspect first, follow local patterns, edit narrowly, and verify.",
+    "- Prefer fast, bounded local inspection (rg, short reads, targeted logs).",
+    "- Avoid interactive shell commands and unbounded recursive scans.",
+    "- On Windows, prefer native PowerShell cmdlets and safe literal paths.",
+    "- Preserve user changes; do not revert unrelated work.",
+    "- Keep final answers concise, with exact files/tests when useful.",
+    "",
+    "## Tool Discipline",
+    "- Parallelize independent reads/searches.",
+    "- Summarize large outputs instead of dumping them into context.",
+    "- Use scratch/artifact paths for bulky evidence.",
+    "- Start fresh sessions before provider-context caps are reached."
+  ].join("\\n");
+}
+function compactSessionPromptForMax(prompt) {
+  if (!prompt?.trim()) return "";
+  return [
+    "## Session Role",
+    "This is a branch/work session. Do the requested work directly, report concise status, and avoid broad context loading unless necessary."
+  ].join("\\n");
+}
+`;
+}
+
+function insertBeforeFirstAvailable(source, anchors, insertion, label) {
+  for (const anchor of anchors) {
+    if (source.includes(anchor)) {
+      return replaceOnce(source, anchor, `${insertion}${anchor}`, label);
+    }
+  }
+  fail(`${label}: no insertion anchor found`);
+}
+
+function applyStaticPromptCompaction(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "static-prompt-compaction") === "present") {
+    skipped.push("static prompt compaction already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function transformSystemPrompt(")) {
+    skipped.push("static prompt compaction skipped: transformSystemPrompt not found");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function compactBaseInstructionsForMax(prompt) {")) {
+    out = insertBeforeFirstAvailable(
+      out,
+      ["function promptUserProfileCapChars() {", "function transformSystemPrompt("],
+      staticPromptCompactionHelpers(),
+      "insert static prompt compaction helpers"
+    );
+    changed.push("inserted static prompt compaction helpers");
+  }
+
+  if (!out.includes("prompt = compactBaseInstructionsForMax(prompt);")) {
+    const anchor = '  prompt = prompt.replace(/\\n{3,}/g, "\\n\\n").trim();\n';
+    if (out.includes(anchor)) {
+      out = replaceOnce(
+        out,
+        anchor,
+        `${anchor}  if (promptSurfaceLimits().profile === "max") {\n    prompt = compactBaseInstructionsForMax(prompt);\n  }\n`,
+        "insert base prompt compaction call"
+      );
+      changed.push("enabled base prompt compaction");
+    } else {
+      skipped.push("static prompt compaction skipped: normalized prompt anchor not found");
+    }
+  }
+
+  if (!out.includes("compactSessionPromptForMax(sessionTypePrompt.trim())")) {
+    const needle = "${sessionTypePrompt.trim()}";
+    const replacement = '${promptSurfaceLimits().profile === "max" ? compactSessionPromptForMax(sessionTypePrompt.trim()) : sessionTypePrompt.trim()}';
+    const count = out.split(needle).length - 1;
+    if (count === 1) {
+      out = out.replace(needle, replacement);
+      changed.push("enabled session prompt compaction");
+    } else {
+      skipped.push(`static prompt compaction skipped: session prompt anchor count=${count}`);
+    }
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function applyFinalToolDescriptionTrim(source, analysis) {
   let out = source;
   const changed = [];
@@ -513,7 +611,14 @@ function applyStages(source) {
     skipped: memoryCaps.skipped
   });
   const afterMemoryCapsAnalysis = analyzeBundleSource(memoryCaps.source);
-  const finalTrim = applyFinalToolDescriptionTrim(memoryCaps.source, afterMemoryCapsAnalysis);
+  const staticPromptCompaction = applyStaticPromptCompaction(memoryCaps.source, afterMemoryCapsAnalysis);
+  stages.push({
+    id: "static-prompt-compaction",
+    changed: staticPromptCompaction.changed,
+    skipped: staticPromptCompaction.skipped
+  });
+  const afterStaticPromptCompactionAnalysis = analyzeBundleSource(staticPromptCompaction.source);
+  const finalTrim = applyFinalToolDescriptionTrim(staticPromptCompaction.source, afterStaticPromptCompactionAnalysis);
   stages.push({
     id: "final-tool-description-trim",
     changed: finalTrim.changed,
@@ -522,8 +627,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis

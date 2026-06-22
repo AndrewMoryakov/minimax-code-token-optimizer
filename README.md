@@ -6,6 +6,12 @@ MiniMax Code / Mavis token consumption.
 This repository is based on a local optimization pass that reduced tiny fresh
 direct-M3 request input from `26147` tokens to `7550` tokens in canary tests.
 
+## Project Status
+
+Windows-first, experimental, and actively compatibility-gated. The installer
+backs up files and aborts when expected MiniMax bundle anchors are missing. The
+repo does not ship MiniMax vendor bundles or API keys.
+
 ## What This Does
 
 - Keeps the main chat session on direct `minimax/MiniMax-M3`.
@@ -38,12 +44,12 @@ This repo does not redistribute MiniMax's bundled `@mavis/opencode-plugin`
 file. The scripts patch a local installation by anchored transforms and verify
 the result. That avoids shipping vendor code.
 
-The current public patcher expects the MiniMax bundle to already contain the
-base request-patching anchors used by our local build. It can add the direct M3
-output-cap stage, request diagnostics, schema-preserving tool-definition trim,
-max-profile memory caps, and final tool-description trim to compatible bundles.
-If a future or older bundle lacks required anchors, the patcher aborts with a
-clear message instead of corrupting the install.
+The current public patcher expects the MiniMax bundle to contain recognizable
+base request-patching and prompt-surface anchors. On compatible bundles, it can
+add direct M3 output cap, request diagnostics, schema-preserving tool-definition
+trim, max-profile memory caps, max-profile static prompt compaction, and final
+tool-description trim. If a future or older bundle lacks required anchors, the
+patcher aborts with a clear message instead of corrupting the install.
 
 ## Repository Contents
 
@@ -64,6 +70,7 @@ scripts/
   check-repo.mjs
 docs/
   CHANGE_INDEX.md
+  COMPATIBILITY.md
 ```
 
 ## AI Agent Quick Install
@@ -151,6 +158,14 @@ Run the synthetic patcher regression test:
 
 ```powershell
 node .\scripts\test-patcher.mjs
+```
+
+Recommended pre-publish/local health check:
+
+```powershell
+node .\scripts\test-patcher.mjs
+node .\scripts\check-repo.mjs
+node .\scripts\install.mjs --profile max --dry-run
 ```
 
 Install or update the standalone user plugins:

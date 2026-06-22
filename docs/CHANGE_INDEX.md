@@ -103,6 +103,13 @@ The public patcher can add max-profile caps for injected user profile, memory
 tail, and memory summary helpers when those recognizable functions exist. Memory
 stays enabled; only the injected character budgets are bounded in `max`.
 
+### Static Prompt Compaction
+
+The public patcher can add max-profile base/session prompt compaction to
+compatible bundles with recognizable `transformSystemPrompt` anchors. This is
+the most behavior-sensitive stage, so it is anchored narrowly and tested with a
+synthetic fixture.
+
 ### Prompt Cache Markers
 
 Prompt-cache markers are applied in enforce mode, and provider 4xx errors retry

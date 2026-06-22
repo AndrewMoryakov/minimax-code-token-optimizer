@@ -72,10 +72,22 @@ export const STAGES = [
   {
     id: "memory-caps",
     label: "Max-profile memory caps",
+    appliedByCurrentPatcher: true,
     markers: [
       ["userProfileCap1200", 'profile === "max" ? 1200'],
       ["memoryTailCap4500", 'profile === "max" ? 4500'],
       ["memorySummaryCap1800", 'profile === "max" ? 1800']
+    ]
+  },
+  {
+    id: "static-prompt-compaction",
+    label: "Max-profile static prompt compaction",
+    appliedByCurrentPatcher: true,
+    markers: [
+      ["compactBaseInstructionsForMax", "function compactBaseInstructionsForMax(prompt) {"],
+      ["compactSessionPromptForMax", "function compactSessionPromptForMax(prompt) {"],
+      ["baseInstructionsCompactionCall", "prompt = compactBaseInstructionsForMax(prompt);"],
+      ["sessionPromptCompactionCall", "compactSessionPromptForMax(sessionTypePrompt.trim())"]
     ]
   }
 ];
