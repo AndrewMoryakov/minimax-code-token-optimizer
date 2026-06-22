@@ -31,8 +31,8 @@ node .\scripts\install.mjs --profile max
 ```
 
 The installer applies the guarded bundle patch, installs standalone plugins,
-registers those plugins in `opencode\opencode.json`, merges the max-economy
-policy with a backup, and verifies the result.
+makes a best-effort registration of those plugins in `opencode\opencode.json`,
+merges the max-economy policy with a backup, and verifies the result.
 
 3. Optional: reload the worker.
 
@@ -58,7 +58,14 @@ Expected diagnostic signals:
 
 - `bundle_patched=true`
 - `policy_main_direct_m3=true`
-- `opencode_plugins_registered=true`
+- `opencode_plugins_registered=true` is useful, but not durable on every
+  MiniMax Desktop restart because Desktop can regenerate `opencode.json`.
+
+`request-guard` defaults to observe mode. Set
+`MAVIS_REQUEST_GUARD_MODE=enforce` only after the user accepts that oversized
+provider requests may be blocked before they are sent. If Desktop regenerates
+`opencode.json`, standalone plugins may need a runtime-specific registration
+hook before they load.
 
 5. Manual fallback commands.
 

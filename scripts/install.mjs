@@ -87,11 +87,11 @@ function logBackup(backup) {
 }
 
 function pluginSourceNames() {
-  return ["openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js"];
+  return ["openrouter-lifecycle.js", "prompt-surface.js", "request-guard.js", "prompt-cache.js"];
 }
 
 function pluginConfigNames() {
-  return ["openrouter-lifecycle", "prompt-surface", "prompt-cache"];
+  return ["openrouter-lifecycle", "prompt-surface", "request-guard", "prompt-cache"];
 }
 
 function installPlugins() {
@@ -277,7 +277,9 @@ if (!skipVerify && !dryRun) {
   if (!finalReport.policy.mainDirectM3) fail("diagnose says policy main route is not direct M3");
   const missingPlugins = finalReport.plugins.plugins.filter((plugin) => !plugin.exists);
   if (missingPlugins.length > 0) fail(`diagnose says plugins are missing: ${missingPlugins.map((p) => p.name).join(", ")}`);
-  if (!finalReport.opencodeConfig.pluginsRegistered) fail(`diagnose says plugins are not registered: ${finalReport.opencodeConfig.missingPlugins.join(", ")}`);
+  if (!finalReport.opencodeConfig.pluginsRegistered) {
+    console.log(`plugin_registration_warning=${finalReport.opencodeConfig.missingPlugins.join(",")}`);
+  }
 } else if (skipVerify) {
   console.log("skip_verify=true");
 }

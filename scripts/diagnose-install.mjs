@@ -129,7 +129,7 @@ function inspectPolicy() {
 }
 
 function inspectPlugins() {
-  const pluginNames = ["openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js"];
+  const pluginNames = ["openrouter-lifecycle.js", "prompt-surface.js", "request-guard.js", "prompt-cache.js"];
   return {
     dir: pluginsDir,
     exists: exists(pluginsDir),
@@ -149,7 +149,7 @@ function inspectPlugins() {
 
 function inspectOpenCodeConfig() {
   const parsed = readJson(opencodeConfigPath);
-  const expected = ["mavis", "openrouter-lifecycle", "prompt-surface", "prompt-cache"];
+  const expected = ["mavis", "openrouter-lifecycle", "prompt-surface", "request-guard", "prompt-cache"];
   const plugins = Array.isArray(parsed.value?.plugin) ? parsed.value.plugin : [];
   const missingPlugins = expected.filter((name) => !plugins.includes(name));
   return {
@@ -191,8 +191,12 @@ function summarize(report) {
   if (missingPlugins.length > 0) issues.push(`Standalone plugins missing: ${missingPlugins.join(", ")}.`);
   if (!report.opencodeConfig.exists) issues.push("OpenCode config missing.");
   if (report.opencodeConfig.exists && !report.opencodeConfig.parseOk) issues.push(`OpenCode config does not parse: ${report.opencodeConfig.error}.`);
+  const warnings = [];
   if (report.opencodeConfig.parseOk && !report.opencodeConfig.pluginsRegistered) {
-    issues.push(`Standalone plugins not registered in opencode.json: ${report.opencodeConfig.missingPlugins.join(", ")}.`);
+    warnings.push(
+      `Standalone plugins not registered in generated opencode.json: ${report.opencodeConfig.missingPlugins.join(", ")}. ` +
+      "MiniMax Desktop may regenerate this file on worker restart; bundled patch stages remain the durable path."
+    );
   }
 
   let nextAction = "No action needed.";
@@ -202,8 +206,6 @@ function summarize(report) {
     nextAction = "Run: node .\\scripts\\apply-mavis-opencode-optimizations.mjs";
   } else if (missingPlugins.length > 0) {
     nextAction = "Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\install-user-plugins.ps1";
-  } else if (report.opencodeConfig.parseOk && !report.opencodeConfig.pluginsRegistered) {
-    nextAction = "Run: node .\\scripts\\install.mjs --profile max";
   } else {
     nextAction = "Run verification and then reload worker if needed.";
   }
@@ -211,6 +213,7 @@ function summarize(report) {
   return {
     ok: issues.length === 0 && report.bundle.compatible && report.bundle.patched,
     issues,
+    warnings,
     nextAction
   };
 }
@@ -274,6 +277,10 @@ if (jsonMode) {
   if (report.summary.issues.length > 0) {
     console.log("issues:");
     for (const issue of report.summary.issues) console.log(`- ${issue}`);
+  }
+  if (report.summary.warnings.length > 0) {
+    console.log("warnings:");
+    for (const warning of report.summary.warnings) console.log(`- ${warning}`);
   }
   console.log(`next_action=${report.summary.nextAction}`);
 }

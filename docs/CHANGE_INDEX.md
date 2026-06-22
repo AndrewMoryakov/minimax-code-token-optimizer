@@ -117,8 +117,18 @@ high-frequency `<available_skills>` and `<available_mcp_servers>` blocks from
 the OpenCode prompt surface, follows the same `max` / `medium` / `free` profile
 policy, and fails open if the prompt shape is not recognized.
 
-The installer now also registers standalone plugins in `opencode.json`; copying
-plugin files without registration is treated as incomplete by diagnostics.
+The installer now also attempts to register standalone plugins in
+`opencode.json`. MiniMax Desktop can regenerate that file on restart, so
+diagnostics report missing registration as a warning rather than treating it as
+proof that the durable bundle patch failed.
+
+### Request Guard
+
+`plugins/request-guard.js` adds a preflight byte guard for MiniMax and
+OpenRouter provider requests. It defaults to `observe`, logs oversized request
+bodies before they are sent, and can be switched to `enforce` with
+`MAVIS_REQUEST_GUARD_MODE=enforce` to block requests above provider-specific
+body/message byte thresholds.
 
 ### Patcher Hardening
 

@@ -59,6 +59,7 @@ plugins/
   openrouter-lifecycle.js       # lifecycle model routing plugin
   prompt-cache.js               # direct-M3 prompt cache marker plugin
   prompt-surface.js             # standalone static prompt/MCP/skills reducer
+  request-guard.js              # observe/enforce preflight request byte guard
 examples/
   policy.max-openrouter-lifecycle.json
 scripts/
@@ -93,9 +94,12 @@ plugins. That is expected before installation; read `next_action`.
 The installer does not reload the worker by default. Add `--reload` if you want
 it to restart the OpenCode worker after verification.
 
-The installer also registers standalone plugins in
+The installer also makes a best-effort registration of standalone plugins in
 `%USERPROFILE%\.mavis\agents\mavis\opencode\opencode.json` after `mavis`:
-`openrouter-lifecycle`, `prompt-surface`, and `prompt-cache`.
+`openrouter-lifecycle`, `prompt-surface`, `request-guard`, and `prompt-cache`.
+MiniMax Desktop may regenerate this file on worker restart, so the durable
+optimizations are the guarded bundle patch stages; standalone plugin
+registration should be verified with `diagnose-install.mjs`.
 
 ## Install / Use
 
@@ -214,6 +218,7 @@ $env:MAVIS_CONTEXT_BUDGET_PROFILE = "max"        # max, medium, free
 $env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe
 $env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override
 $env:MAVIS_PROMPT_CACHE_OPENROUTER = ""          # default off
+$env:MAVIS_REQUEST_GUARD_MODE = "observe"        # observe, enforce, off
 ```
 
 OpenRouter:

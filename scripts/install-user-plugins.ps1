@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $sourceDir)) {
 
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
-$plugins = @("openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js")
+$plugins = @("openrouter-lifecycle.js", "prompt-surface.js", "request-guard.js", "prompt-cache.js")
 foreach ($plugin in $plugins) {
   $source = Join-Path $sourceDir $plugin
   $target = Join-Path $targetDir $plugin
@@ -45,7 +45,7 @@ if (Test-Path -LiteralPath $opencodeConfig) {
   }
 
   $json = Get-Content -LiteralPath $opencodeConfig -Raw | ConvertFrom-Json
-  $managed = @("openrouter-lifecycle", "prompt-surface", "prompt-cache")
+  $managed = @("openrouter-lifecycle", "prompt-surface", "request-guard", "prompt-cache")
   $existing = @()
   if ($json.plugin) {
     $existing = @($json.plugin | Where-Object { $managed -notcontains $_ })
