@@ -6,9 +6,11 @@
   "type": "module",
   "bin": {
     "mavis-token-optimizer-apply": "./scripts/apply-mavis-opencode-optimizations.mjs",
+    "mavis-token-optimizer-diagnose": "./scripts/diagnose-install.mjs",
     "mavis-token-optimizer-verify": "./scripts/verify-installed.mjs"
   },
   "scripts": {
+    "diagnose": "node ./scripts/diagnose-install.mjs",
     "verify:installed": "node ./scripts/verify-installed.mjs",
     "apply:bundle": "node ./scripts/apply-mavis-opencode-optimizations.mjs",
     "check:repo": "node ./scripts/check-repo.mjs"

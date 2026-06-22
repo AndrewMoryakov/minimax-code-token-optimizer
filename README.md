@@ -54,6 +54,7 @@ plugins/
 examples/
   policy.max-openrouter-lifecycle.json
 scripts/
+  diagnose-install.mjs
   apply-mavis-opencode-optimizations.mjs
   verify-installed.mjs
   reload-opencode-worker.ps1
@@ -69,6 +70,7 @@ For an existing Windows MiniMax Code install:
 ```powershell
 git clone https://github.com/AndrewMoryakov/minimax-code-token-optimizer.git
 cd minimax-code-token-optimizer
+node .\scripts\diagnose-install.mjs
 node .\scripts\apply-mavis-opencode-optimizations.mjs
 powershell -ExecutionPolicy Bypass -File .\scripts\install-user-plugins.ps1
 node .\scripts\verify-installed.mjs
@@ -78,6 +80,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\reload-opencode-worker.ps1
 If the patcher reports missing anchors, stop: that MiniMax bundle version needs
 a new compatibility pass. See `AGENT_INSTALL.md` for the concise full checklist.
 
+The diagnostic command exits with code `2` when it finds missing patches or
+plugins. That is expected before installation; read `next_action`.
+
 ## Install / Use
 
 Clone:
@@ -85,6 +90,18 @@ Clone:
 ```powershell
 git clone https://github.com/AndrewMoryakov/minimax-code-token-optimizer.git
 cd minimax-code-token-optimizer
+```
+
+Diagnose the local MiniMax Code install:
+
+```powershell
+node .\scripts\diagnose-install.mjs
+```
+
+Machine-readable report:
+
+```powershell
+node .\scripts\diagnose-install.mjs --json
 ```
 
 Apply the guarded bundled-plugin patch to the default MiniMax Desktop install:

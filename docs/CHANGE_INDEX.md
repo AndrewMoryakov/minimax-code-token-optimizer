@@ -97,6 +97,7 @@ Status:
 Use:
 
 ```powershell
+node .\scripts\diagnose-install.mjs
 node .\scripts\verify-installed.mjs
 node .\scripts\check-repo.mjs
 ```
@@ -124,4 +125,3 @@ patchers, small source plugins, examples, and docs.
   behavior for non-main roles.
 - Future MiniMax Desktop updates may change bundle anchors and require patcher
   updates.
-

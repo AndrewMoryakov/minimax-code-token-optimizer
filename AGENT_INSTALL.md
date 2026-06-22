@@ -13,6 +13,13 @@ cd minimax-code-token-optimizer
 
 2. Apply the guarded bundled-plugin patch.
 
+First diagnose. Exit code `2` means the install is incomplete or incompatible;
+read `next_action`.
+
+```powershell
+node .\scripts\diagnose-install.mjs
+```
+
 ```powershell
 node .\scripts\apply-mavis-opencode-optimizations.mjs
 ```
@@ -75,4 +82,3 @@ mavis usage session <mvs-id> --json
 Expected: direct MiniMax M3 usage and a much smaller request than the old
 baseline. Prompt-cache reads/writes may still be zero; that is not a failure of
 the proven token-surface optimization.
-
