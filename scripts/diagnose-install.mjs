@@ -39,6 +39,7 @@ const bundlePath = path.resolve(args.get("target") ?? defaultBundle);
 const mavisRoot = path.resolve(args.get("mavis-root") ?? path.join(home, ".mavis", "agents", "mavis"));
 const policyPath = path.join(mavisRoot, "context-budget", "config", "policy.json");
 const pluginsDir = path.join(mavisRoot, "opencode", "plugins");
+const opencodeConfigPath = path.join(mavisRoot, "opencode", "opencode.json");
 
 function sha256(text) {
   return crypto.createHash("sha256").update(text).digest("hex").toUpperCase();
@@ -146,6 +147,25 @@ function inspectPlugins() {
   };
 }
 
+function inspectOpenCodeConfig() {
+  const parsed = readJson(opencodeConfigPath);
+  const expected = ["mavis", "openrouter-lifecycle", "prompt-surface", "prompt-cache"];
+  const plugins = Array.isArray(parsed.value?.plugin) ? parsed.value.plugin : [];
+  const missingPlugins = expected.filter((name) => !plugins.includes(name));
+  return {
+    path: opencodeConfigPath,
+    exists: parsed.exists,
+    parseOk: parsed.ok,
+    error: parsed.error,
+    plugins,
+    expectedPlugins: expected,
+    missingPlugins,
+    pluginsRegistered: parsed.ok && missingPlugins.length === 0,
+    mavisBeforeManaged: plugins.indexOf("mavis") !== -1 &&
+      expected.slice(1).every((name) => plugins.indexOf(name) === -1 || plugins.indexOf("mavis") < plugins.indexOf(name))
+  };
+}
+
 function inspectOpenRouterKey() {
   const desktopKey = path.join(home, "Desktop", "minimax_openrouter_key.txt");
   return {
@@ -169,6 +189,11 @@ function summarize(report) {
   }
   const missingPlugins = report.plugins.plugins.filter((p) => !p.exists).map((p) => p.name);
   if (missingPlugins.length > 0) issues.push(`Standalone plugins missing: ${missingPlugins.join(", ")}.`);
+  if (!report.opencodeConfig.exists) issues.push("OpenCode config missing.");
+  if (report.opencodeConfig.exists && !report.opencodeConfig.parseOk) issues.push(`OpenCode config does not parse: ${report.opencodeConfig.error}.`);
+  if (report.opencodeConfig.parseOk && !report.opencodeConfig.pluginsRegistered) {
+    issues.push(`Standalone plugins not registered in opencode.json: ${report.opencodeConfig.missingPlugins.join(", ")}.`);
+  }
 
   let nextAction = "No action needed.";
   if (!report.bundle.exists || !report.bundle.compatible) {
@@ -177,6 +202,8 @@ function summarize(report) {
     nextAction = "Run: node .\\scripts\\apply-mavis-opencode-optimizations.mjs";
   } else if (missingPlugins.length > 0) {
     nextAction = "Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\install-user-plugins.ps1";
+  } else if (report.opencodeConfig.parseOk && !report.opencodeConfig.pluginsRegistered) {
+    nextAction = "Run: node .\\scripts\\install.mjs --profile max";
   } else {
     nextAction = "Run verification and then reload worker if needed.";
   }
@@ -205,6 +232,7 @@ const report = {
   mavisRoot,
   policy: inspectPolicy(),
   plugins: inspectPlugins(),
+  opencodeConfig: inspectOpenCodeConfig(),
   openrouterKey: inspectOpenRouterKey()
 };
 report.summary = summarize(report);
@@ -235,6 +263,11 @@ if (jsonMode) {
   for (const plugin of report.plugins.plugins) {
     console.log(`plugin.${plugin.name}.exists=${plugin.exists}`);
   }
+  console.log(`opencode_config=${report.opencodeConfig.path}`);
+  console.log(`opencode_config_exists=${report.opencodeConfig.exists}`);
+  console.log(`opencode_config_parse_ok=${report.opencodeConfig.parseOk}`);
+  console.log(`opencode_plugins_registered=${report.opencodeConfig.pluginsRegistered}`);
+  console.log(`opencode_plugins=${report.opencodeConfig.plugins.join(",")}`);
   console.log(`openrouter_key.env_OPENROUTER_API_KEY=${report.openrouterKey.envOpenRouterApiKey}`);
   console.log(`openrouter_key.env_MAVIS_OPENROUTER_API_KEY=${report.openrouterKey.envMavisOpenRouterApiKey}`);
   console.log(`openrouter_key.desktop_file_exists=${report.openrouterKey.desktopKeyFileExists}`);

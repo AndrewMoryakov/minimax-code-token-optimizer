@@ -93,6 +93,10 @@ plugins. That is expected before installation; read `next_action`.
 The installer does not reload the worker by default. Add `--reload` if you want
 it to restart the OpenCode worker after verification.
 
+The installer also registers standalone plugins in
+`%USERPROFILE%\.mavis\agents\mavis\opencode\opencode.json` after `mavis`:
+`openrouter-lifecycle`, `prompt-surface`, and `prompt-cache`.
+
 ## Install / Use
 
 Clone:
@@ -134,6 +138,7 @@ node .\scripts\install.mjs --profile medium
 node .\scripts\install.mjs --profile max --reload
 node .\scripts\install.mjs --dry-run
 node .\scripts\install.mjs --skip-policy
+node .\scripts\install.mjs --skip-plugin-registration
 ```
 
 Apply the guarded bundled-plugin patch to the default MiniMax Desktop install:

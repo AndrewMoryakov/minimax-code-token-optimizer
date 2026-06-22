@@ -32,3 +32,38 @@ foreach ($plugin in $plugins) {
   Copy-Item -LiteralPath $source -Destination $target -Force
   Write-Output "installed=$target"
 }
+
+$opencodeConfig = Join-Path $MavisRoot "opencode\opencode.json"
+if (Test-Path -LiteralPath $opencodeConfig) {
+  if (-not $NoBackup) {
+    $backupDir = Join-Path (Split-Path -Parent $opencodeConfig) "backups"
+    New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backup = Join-Path $backupDir "opencode.json.before-token-optimizer.$stamp"
+    Copy-Item -LiteralPath $opencodeConfig -Destination $backup -Force
+    Write-Output "backup=$backup"
+  }
+
+  $json = Get-Content -LiteralPath $opencodeConfig -Raw | ConvertFrom-Json
+  $managed = @("openrouter-lifecycle", "prompt-surface", "prompt-cache")
+  $existing = @()
+  if ($json.plugin) {
+    $existing = @($json.plugin | Where-Object { $managed -notcontains $_ })
+  }
+  if ($existing -notcontains "mavis") {
+    $existing = @("mavis") + $existing
+  }
+  $result = New-Object System.Collections.Generic.List[string]
+  foreach ($item in $existing) {
+    [void]$result.Add([string]$item)
+    if ($item -eq "mavis") {
+      foreach ($pluginName in $managed) { [void]$result.Add($pluginName) }
+    }
+  }
+  $json.plugin = @($result)
+  $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $opencodeConfig -Encoding UTF8
+  Write-Output "registered_plugins=$opencodeConfig"
+  Write-Output "plugin_order=$($result -join ',')"
+} else {
+  Write-Output "opencode_config_missing=$opencodeConfig"
+}

@@ -117,6 +117,9 @@ high-frequency `<available_skills>` and `<available_mcp_servers>` blocks from
 the OpenCode prompt surface, follows the same `max` / `medium` / `free` profile
 policy, and fails open if the prompt shape is not recognized.
 
+The installer now also registers standalone plugins in `opencode.json`; copying
+plugin files without registration is treated as incomplete by diagnostics.
+
 ### Patcher Hardening
 
 The patcher now treats request diagnostics as part of the final patch

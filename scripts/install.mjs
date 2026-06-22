@@ -28,6 +28,7 @@ const target = args.get("target");
 const dryRun = args.has("dry-run");
 const skipPolicy = args.has("skip-policy");
 const skipPlugins = args.has("skip-plugins");
+const skipPluginRegistration = args.has("skip-plugin-registration");
 const skipBundle = args.has("skip-bundle");
 const skipVerify = args.has("skip-verify");
 const reload = args.has("reload");
@@ -89,6 +90,10 @@ function pluginSourceNames() {
   return ["openrouter-lifecycle.js", "prompt-cache.js", "prompt-surface.js"];
 }
 
+function pluginConfigNames() {
+  return ["openrouter-lifecycle", "prompt-surface", "prompt-cache"];
+}
+
 function installPlugins() {
   const sourceDir = path.join(repoRoot, "plugins");
   const targetDir = path.join(mavisRoot, "opencode", "plugins");
@@ -103,6 +108,41 @@ function installPlugins() {
     if (!dryRun) fs.copyFileSync(source, dest);
     console.log(`${dryRun ? "would_install" : "installed"}=${dest}`);
   }
+}
+
+function registerPlugins() {
+  const configPath = path.join(mavisRoot, "opencode", "opencode.json");
+  if (!fs.existsSync(configPath)) {
+    fail(`opencode config not found: ${configPath}`);
+  }
+  let current;
+  try {
+    current = readJson(configPath);
+  } catch (err) {
+    fail(`opencode config does not parse: ${configPath}\n${err instanceof Error ? err.message : String(err)}`);
+  }
+  const existing = Array.isArray(current.plugin) ? current.plugin : [];
+  const withoutManaged = existing.filter((item) => !pluginConfigNames().includes(item));
+  const mavisIndex = withoutManaged.indexOf("mavis");
+  const base = mavisIndex === -1 ? ["mavis", ...withoutManaged] : withoutManaged;
+  const insertAt = base.indexOf("mavis") + 1;
+  const nextPlugins = [
+    ...base.slice(0, insertAt),
+    ...pluginConfigNames(),
+    ...base.slice(insertAt),
+  ];
+  const next = { ...current, plugin: nextPlugins };
+  const before = fs.readFileSync(configPath, "utf8");
+  const after = stableStringify(next);
+  if (before === after) {
+    console.log(`plugins_registered_unchanged=${configPath}`);
+    return;
+  }
+  const backup = backupFile(configPath, "before-token-optimizer");
+  logBackup(backup);
+  if (!dryRun) fs.writeFileSync(configPath, after, "utf8");
+  console.log(`${dryRun ? "would_register_plugins" : "registered_plugins"}=${configPath}`);
+  console.log(`plugin_order=${nextPlugins.join(",")}`);
 }
 
 function readJson(filePath) {
@@ -213,6 +253,11 @@ if (!skipBundle) {
 
 if (!skipPlugins) {
   installPlugins();
+  if (!skipPluginRegistration) {
+    registerPlugins();
+  } else {
+    console.log("skip_plugin_registration=true");
+  }
 } else {
   console.log("skip_plugins=true");
 }
@@ -232,6 +277,7 @@ if (!skipVerify && !dryRun) {
   if (!finalReport.policy.mainDirectM3) fail("diagnose says policy main route is not direct M3");
   const missingPlugins = finalReport.plugins.plugins.filter((plugin) => !plugin.exists);
   if (missingPlugins.length > 0) fail(`diagnose says plugins are missing: ${missingPlugins.map((p) => p.name).join(", ")}`);
+  if (!finalReport.opencodeConfig.pluginsRegistered) fail(`diagnose says plugins are not registered: ${finalReport.opencodeConfig.missingPlugins.join(", ")}`);
 } else if (skipVerify) {
   console.log("skip_verify=true");
 }

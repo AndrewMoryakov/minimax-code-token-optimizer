@@ -31,7 +31,8 @@ node .\scripts\install.mjs --profile max
 ```
 
 The installer applies the guarded bundle patch, installs standalone plugins,
-merges the max-economy policy with a backup, and verifies the result.
+registers those plugins in `opencode\opencode.json`, merges the max-economy
+policy with a backup, and verifies the result.
 
 3. Optional: reload the worker.
 
@@ -50,7 +51,14 @@ node .\scripts\install.mjs --profile max --reload
 ```powershell
 node .\scripts\verify-installed.mjs
 node .\scripts\check-repo.mjs
+node .\scripts\diagnose-install.mjs
 ```
+
+Expected diagnostic signals:
+
+- `bundle_patched=true`
+- `policy_main_direct_m3=true`
+- `opencode_plugins_registered=true`
 
 5. Manual fallback commands.
 
