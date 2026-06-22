@@ -39,10 +39,10 @@ file. The scripts patch a local installation by anchored transforms and verify
 the result. That avoids shipping vendor code.
 
 The current public patcher expects the MiniMax bundle to already contain the
-Mavis optimization anchors used by our local build, such as
-`patchMiniMaxPromptCacheBody()` and `promptSurfaceLimits()`. If a future or
-older bundle lacks those anchors, the patcher aborts with a clear message
-instead of corrupting the install.
+base request-patching anchors used by our local build. It can add the direct M3
+output-cap stage and final tool-description trim to compatible bundles. If a
+future or older bundle lacks required anchors, the patcher aborts with a clear
+message instead of corrupting the install.
 
 ## Repository Contents
 

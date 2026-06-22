@@ -48,6 +48,20 @@ function replaceOnce(source, needle, replacement, label) {
   return source.replace(needle, replacement);
 }
 
+function insertAfterLastUserDetail(source, lines, label) {
+  const pattern = /^(\s*)lastUser: 0,?\r?$/gm;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) {
+    fail(`${label}: expected exactly one lastUser detail anchor, found ${matches.length}`);
+  }
+  const indent = matches[0][1];
+  const replacement = [
+    `${indent}lastUser: 0,`,
+    ...lines.map((line) => `${indent}${line}`)
+  ].join("\n");
+  return source.replace(pattern, replacement);
+}
+
 function ensurePrerequisites(source) {
   const analysis = analyzeBundleSource(source);
   if (!analysis.compatibleWithCurrentPatcher) {
@@ -63,6 +77,60 @@ function ensurePrerequisites(source) {
 
 function stageStatus(analysis, id) {
   return analysis.stages.find((stage) => stage.id === id)?.status ?? "missing";
+}
+
+function applyDirectM3OutputCap(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "direct-m3-output-cap") === "present") {
+    skipped.push("direct M3 output cap already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+    out = replaceOnce(
+      out,
+      "function isMiniMaxPromptCacheTarget(input, init) {",
+      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction isMiniMaxPromptCacheTarget(input, init) {",
+      "insert MINIMAX_DEFAULT_MAX_TOKENS"
+    );
+    changed.push("inserted direct M3 default max_tokens cap");
+  }
+
+  if (!out.includes("maxTokensBefore: typeof parsed.max_tokens === \"number\" ? parsed.max_tokens : void 0")) {
+    out = insertAfterLastUserDetail(
+      out,
+      [
+        'maxTokensBefore: typeof parsed.max_tokens === "number" ? parsed.max_tokens : void 0,',
+        'maxTokensAfter: typeof parsed.max_tokens === "number" ? parsed.max_tokens : void 0'
+      ],
+      "add max_tokens diagnostics"
+    );
+    changed.push("added max_tokens diagnostics");
+  }
+
+  if (!out.includes("process.env.MAVIS_MINIMAX_MAX_TOKENS")) {
+    out = replaceOnce(
+      out,
+      "  const tools = annotatePromptCacheTools(parsed.tools);\n",
+      [
+        '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
+        "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;",
+        "  if (typeof parsed.max_tokens === \"number\" && parsed.max_tokens > maxTokenCap) {",
+        "    parsed.max_tokens = maxTokenCap;",
+        "    details.maxTokensAfter = maxTokenCap;",
+        "    changed = true;",
+        "  }",
+        "  const tools = annotatePromptCacheTools(parsed.tools);"
+      ].join("\n") + "\n",
+      "insert max_tokens clamp"
+    );
+    changed.push("enabled direct M3 max_tokens clamp");
+  }
+
+  return { source: out, changed, skipped };
 }
 
 function applyFinalToolDescriptionTrim(source, analysis) {
@@ -117,15 +185,13 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   }
 
   if (!out.includes("toolDescriptionsTrimmed: 0,")) {
-    out = replaceOnce(
+    out = insertAfterLastUserDetail(
       out,
-      "    lastUser: 0,\n",
       [
-        "    lastUser: 0,",
-        "    toolDescriptionsTrimmed: 0,",
-        "    toolDescriptionBytesBefore: 0,",
-        "    toolDescriptionBytesAfter: 0,"
-      ].join("\n") + "\n",
+        "toolDescriptionsTrimmed: 0,",
+        "toolDescriptionBytesBefore: 0,",
+        "toolDescriptionBytesAfter: 0,"
+      ],
       "add trim diagnostics"
     );
     changed.push("added trim diagnostics");
@@ -170,7 +236,14 @@ function applyFinalToolDescriptionTrim(source, analysis) {
 function applyStages(source) {
   const beforeAnalysis = ensurePrerequisites(source);
   const stages = [];
-  const finalTrim = applyFinalToolDescriptionTrim(source, beforeAnalysis);
+  const outputCap = applyDirectM3OutputCap(source, beforeAnalysis);
+  stages.push({
+    id: "direct-m3-output-cap",
+    changed: outputCap.changed,
+    skipped: outputCap.skipped
+  });
+  const afterOutputCapAnalysis = analyzeBundleSource(outputCap.source);
+  const finalTrim = applyFinalToolDescriptionTrim(outputCap.source, afterOutputCapAnalysis);
   stages.push({
     id: "final-tool-description-trim",
     changed: finalTrim.changed,
@@ -179,8 +252,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: finalTrim.changed,
-    skipped: finalTrim.skipped,
+    changed: [...outputCap.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis

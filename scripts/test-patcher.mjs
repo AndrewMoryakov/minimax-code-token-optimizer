@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
 
@@ -17,8 +18,6 @@ const fixture = `function compactDescription(text, maxLen) {
 function promptSurfaceLimits() {
   return { profile: "max" };
 }
-var MINIMAX_DEFAULT_MAX_TOKENS = 8192;
-var configuredCap = process.env.MAVIS_MINIMAX_MAX_TOKENS;
 var SKILL_TOOL_DESCRIPTION = "Load a skill by name.";
 function isMiniMaxPromptCacheTarget(input, init) {
   return true;
@@ -27,16 +26,16 @@ function annotatePromptCacheTools(tools) {
   return { value: tools, added: 0 };
 }
 function patchMiniMaxPromptCacheBody(bodyText) {
+  const parsed = JSON.parse(bodyText);
   const details = {
     tools: 0,
     system: 0,
-    lastUser: 0,
-    maxTokensBefore: 32000,
-    maxTokensAfter: 8192
+    lastUser: 0
   };
-  const parsed = JSON.parse(bodyText);
+  let added = 0;
+  let changed = false;
   const tools = annotatePromptCacheTools(parsed.tools);
-  return { body: JSON.stringify(parsed), details, changed: false, added: tools.added };
+  return { body: JSON.stringify(parsed), details, changed, added: added + tools.added };
 }
 function injectDynamicBlocks() {}
 function transformSystemPrompt() {}
@@ -71,10 +70,23 @@ const firstReport = JSON.parse(first.stdout);
 assert.equal(firstReport.changed, true);
 assert.equal(firstReport.beforeClassification, "base-compatible");
 assert.equal(firstReport.afterClassification, "fully-patched");
+assert.ok(firstReport.changes.includes("inserted direct M3 default max_tokens cap"));
+assert.ok(firstReport.changes.includes("enabled direct M3 max_tokens clamp"));
 
 analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "fully-patched");
 assert.equal(analysis.finalPatchPresent, true);
+
+const patchedModule = await import(`${pathToFileURL(fixturePath).href}?v=${Date.now()}`);
+const patchedRequest = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
+  max_tokens: 32000,
+  tools: [{ name: "skill", description: "verbose skill description ".repeat(100) }]
+}));
+const patchedBody = JSON.parse(patchedRequest.body);
+assert.equal(patchedBody.max_tokens, 8192);
+assert.equal(patchedRequest.details.maxTokensBefore, 32000);
+assert.equal(patchedRequest.details.maxTokensAfter, 8192);
+assert.equal(patchedRequest.changed, true);
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);

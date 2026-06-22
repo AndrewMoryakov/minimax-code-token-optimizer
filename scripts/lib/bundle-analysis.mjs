@@ -24,7 +24,7 @@ export const STAGES = [
   {
     id: "direct-m3-output-cap",
     label: "Direct M3 output cap",
-    requiredForCurrentPatcher: true,
+    appliedByCurrentPatcher: true,
     markers: [
       ["maxTokenCap8192", "var MINIMAX_DEFAULT_MAX_TOKENS = 8192"],
       ["maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"]
@@ -52,6 +52,7 @@ export const STAGES = [
   {
     id: "final-tool-description-trim",
     label: "Final request-body tool description trim",
+    appliedByCurrentPatcher: true,
     markers: [
       ["trimFinalToolDescriptionsForMax", "function trimFinalToolDescriptionsForMax(tools) {"],
       ["toolDescriptionsTrimmed", "toolDescriptionsTrimmed"],
@@ -61,6 +62,7 @@ export const STAGES = [
   {
     id: "request-patcher-test-export",
     label: "Request patcher test export",
+    appliedByCurrentPatcher: true,
     markers: [
       ["patchMiniMaxPromptCacheBodyExport", "patchMiniMaxPromptCacheBody,"]
     ]
@@ -119,8 +121,8 @@ export function analyzeBundleSource(source) {
   const missingRequiredStages = requiredStages.filter((stage) => stage.status !== "present").map((stage) => stage.id);
   const presentStages = stages.filter((stage) => stage.status === "present").length;
   const partialStages = stages.filter((stage) => stage.status === "partial").length;
-  const finalPatchStages = ["final-tool-description-trim", "request-patcher-test-export"];
-  const finalPatchPresent = finalPatchStages.every((id) => stages.find((stage) => stage.id === id)?.status === "present");
+  const currentPatchStages = stages.filter((stage) => STAGES.find((candidate) => candidate.id === stage.id)?.appliedByCurrentPatcher);
+  const finalPatchPresent = currentPatchStages.every((stage) => stage.status === "present");
   let classification = "unsupported";
   if (missingRequiredStages.length === 0 && finalPatchPresent) {
     classification = "fully-patched";
@@ -149,4 +151,3 @@ export function analyzeBundleFile(filePath) {
     ...analyzeBundleSource(bundle.source)
   };
 }
-

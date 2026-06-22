@@ -72,6 +72,9 @@ Override:
 $env:MAVIS_MINIMAX_MAX_TOKENS = "12000"
 ```
 
+The public patcher can now add this output-cap stage to a compatible bundle
+that has the base direct-M3 request patcher but is missing the cap.
+
 ### Final Tool Description Trim
 
 The biggest remaining tool payload was the `skill` tool description. Diagnostics
