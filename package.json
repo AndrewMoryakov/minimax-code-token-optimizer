@@ -17,6 +17,7 @@
     "install:optimizer": "node ./scripts/install.mjs",
     "verify:installed": "node ./scripts/verify-installed.mjs",
     "apply:bundle": "node ./scripts/apply-mavis-opencode-optimizations.mjs",
+    "test:patcher": "node ./scripts/test-patcher.mjs",
     "check:repo": "node ./scripts/check-repo.mjs"
   },
   "keywords": [

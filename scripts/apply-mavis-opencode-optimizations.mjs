@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import crypto from "node:crypto";
+import { analyzeBundleSource, sha256 } from "./lib/bundle-analysis.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -33,10 +33,7 @@ const defaultTarget = path.join(
 
 const target = path.resolve(args.get("target") ?? defaultTarget);
 const dryRun = args.has("dry-run");
-
-function sha256(text) {
-  return crypto.createHash("sha256").update(text).digest("hex").toUpperCase();
-}
+const jsonMode = args.has("json");
 
 function fail(message) {
   console.error(`ERROR: ${message}`);
@@ -52,27 +49,30 @@ function replaceOnce(source, needle, replacement, label) {
 }
 
 function ensurePrerequisites(source) {
-  const required = [
-    "function patchMiniMaxPromptCacheBody(bodyText) {",
-    "function promptSurfaceLimits() {",
-    "function compactDescription(",
-    "var MINIMAX_DEFAULT_MAX_TOKENS",
-    "function annotatePromptCacheTools(tools) {"
-  ];
-  const missing = required.filter((marker) => !source.includes(marker));
-  if (missing.length > 0) {
+  const analysis = analyzeBundleSource(source);
+  if (!analysis.compatibleWithCurrentPatcher) {
     fail([
       "This MiniMax bundle does not expose the expected optimization anchors.",
       "The redistributable patcher does not ship or reconstruct vendor bundle code.",
-      "Missing markers:",
-      ...missing.map((marker) => `  - ${marker}`)
+      "Missing required stages:",
+      ...analysis.missingRequiredStages.map((stage) => `  - ${stage}`)
     ].join("\n"));
   }
+  return analysis;
 }
 
-function applyFinalToolDescriptionTrim(source) {
+function stageStatus(analysis, id) {
+  return analysis.stages.find((stage) => stage.id === id)?.status ?? "missing";
+}
+
+function applyFinalToolDescriptionTrim(source, analysis) {
   let out = source;
   const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "final-tool-description-trim") === "present") {
+    skipped.push("final request-body tool description trim already present");
+  }
 
   if (!out.includes("function trimFinalToolDescriptionsForMax(tools) {")) {
     const helper = `function trimFinalToolDescriptionsForMax(tools) {
@@ -150,6 +150,10 @@ function applyFinalToolDescriptionTrim(source) {
     changed.push("enabled final request-body tool trim");
   }
 
+  if (stageStatus(analysis, "request-patcher-test-export") === "present") {
+    skipped.push("request patcher test export already present");
+  }
+
   if (!out.includes("patchMiniMaxPromptCacheBody,")) {
     out = replaceOnce(
       out,
@@ -160,7 +164,27 @@ function applyFinalToolDescriptionTrim(source) {
     changed.push("exported request-body patcher for smoke tests");
   }
 
-  return { source: out, changed };
+  return { source: out, changed, skipped };
+}
+
+function applyStages(source) {
+  const beforeAnalysis = ensurePrerequisites(source);
+  const stages = [];
+  const finalTrim = applyFinalToolDescriptionTrim(source, beforeAnalysis);
+  stages.push({
+    id: "final-tool-description-trim",
+    changed: finalTrim.changed,
+    skipped: finalTrim.skipped
+  });
+  const afterAnalysis = analyzeBundleSource(finalTrim.source);
+  return {
+    source: finalTrim.source,
+    changed: finalTrim.changed,
+    skipped: finalTrim.skipped,
+    stages,
+    beforeAnalysis,
+    afterAnalysis
+  };
 }
 
 if (!fs.existsSync(target)) {
@@ -168,35 +192,71 @@ if (!fs.existsSync(target)) {
 }
 
 const before = fs.readFileSync(target, "utf8");
-ensurePrerequisites(before);
+const beforeHash = sha256(before);
+const result = applyStages(before);
 
-const result = applyFinalToolDescriptionTrim(before);
 if (result.changed.length === 0) {
-  console.log("already patched");
-  console.log(`target=${target}`);
-  console.log(`sha256=${sha256(before)}`);
+  const report = {
+    target,
+    changed: false,
+    beforeSha256: beforeHash,
+    afterSha256: beforeHash,
+    beforeClassification: result.beforeAnalysis.classification,
+    afterClassification: result.afterAnalysis.classification,
+    skipped: result.skipped
+  };
+  if (jsonMode) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log("already patched");
+    console.log(`target=${target}`);
+    console.log(`classification=${report.afterClassification}`);
+    console.log(`sha256=${beforeHash}`);
+    for (const item of result.skipped) console.log(`skipped=${item}`);
+  }
   process.exit(0);
 }
 
-console.log("planned changes:");
-for (const item of result.changed) console.log(`- ${item}`);
-
-if (dryRun) {
-  console.log("dry-run: target was not modified");
-  console.log(`before_sha256=${sha256(before)}`);
-  console.log(`after_sha256=${sha256(result.source)}`);
-  process.exit(0);
-}
+const afterHash = sha256(result.source);
+const baseReport = {
+  target,
+  changed: true,
+  dryRun,
+  beforeSha256: beforeHash,
+  afterSha256: afterHash,
+  beforeClassification: result.beforeAnalysis.classification,
+  afterClassification: result.afterAnalysis.classification,
+  changes: result.changed,
+  skipped: result.skipped
+};
 
 const backupDir = path.join(path.dirname(target), "mavis-token-optimizer-backups");
-fs.mkdirSync(backupDir, { recursive: true });
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
 const backup = path.join(backupDir, `index.before-token-optimizer.${stamp}.js`);
-fs.copyFileSync(target, backup);
-fs.writeFileSync(target, result.source, "utf8");
+if (!dryRun) {
+  fs.mkdirSync(backupDir, { recursive: true });
+  fs.copyFileSync(target, backup);
+  fs.writeFileSync(target, result.source, "utf8");
+}
 
-console.log(`backup=${backup}`);
-console.log(`applied=${target}`);
-console.log(`before_sha256=${sha256(before)}`);
-console.log(`after_sha256=${sha256(result.source)}`);
+const report = {
+  ...baseReport,
+  backup: dryRun ? null : backup
+};
 
+if (jsonMode) {
+  console.log(JSON.stringify(report, null, 2));
+} else {
+  console.log("planned changes:");
+  for (const item of result.changed) console.log(`- ${item}`);
+  console.log(`before_classification=${result.beforeAnalysis.classification}`);
+  console.log(`after_classification=${result.afterAnalysis.classification}`);
+  if (dryRun) {
+    console.log("dry-run: target was not modified");
+  } else {
+    console.log(`backup=${backup}`);
+    console.log(`applied=${target}`);
+  }
+  console.log(`before_sha256=${beforeHash}`);
+  console.log(`after_sha256=${afterHash}`);
+}

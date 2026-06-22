@@ -131,6 +131,7 @@ Apply the guarded bundled-plugin patch to the default MiniMax Desktop install:
 
 ```powershell
 node .\scripts\apply-mavis-opencode-optimizations.mjs
+node .\scripts\apply-mavis-opencode-optimizations.mjs --json
 ```
 
 Use a custom target:
@@ -143,6 +144,12 @@ Verify installed bundle markers:
 
 ```powershell
 node .\scripts\verify-installed.mjs
+```
+
+Run the synthetic patcher regression test:
+
+```powershell
+node .\scripts\test-patcher.mjs
 ```
 
 Install or update the standalone user plugins:
