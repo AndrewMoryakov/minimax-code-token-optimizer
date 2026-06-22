@@ -54,6 +54,7 @@ plugins/
 examples/
   policy.max-openrouter-lifecycle.json
 scripts/
+  analyze-bundle.mjs
   diagnose-install.mjs
   install.mjs
   apply-mavis-opencode-optimizations.mjs
@@ -96,6 +97,13 @@ Diagnose the local MiniMax Code install:
 
 ```powershell
 node .\scripts\diagnose-install.mjs
+```
+
+Analyze only the bundled `@mavis/opencode-plugin` patch stages:
+
+```powershell
+node .\scripts\analyze-bundle.mjs
+node .\scripts\analyze-bundle.mjs --json
 ```
 
 Machine-readable report:

@@ -20,6 +20,12 @@ read `next_action`.
 node .\scripts\diagnose-install.mjs
 ```
 
+If only bundle compatibility matters, run:
+
+```powershell
+node .\scripts\analyze-bundle.mjs
+```
+
 ```powershell
 node .\scripts\install.mjs --profile max
 ```

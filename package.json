@@ -5,12 +5,14 @@
   "description": "Redistributable scripts, plugins, and docs for reducing MiniMax Code / Mavis token usage.",
   "type": "module",
   "bin": {
+    "mavis-token-optimizer-analyze-bundle": "./scripts/analyze-bundle.mjs",
     "mavis-token-optimizer-apply": "./scripts/apply-mavis-opencode-optimizations.mjs",
     "mavis-token-optimizer-diagnose": "./scripts/diagnose-install.mjs",
     "mavis-token-optimizer-install": "./scripts/install.mjs",
     "mavis-token-optimizer-verify": "./scripts/verify-installed.mjs"
   },
   "scripts": {
+    "analyze:bundle": "node ./scripts/analyze-bundle.mjs",
     "diagnose": "node ./scripts/diagnose-install.mjs",
     "install:optimizer": "node ./scripts/install.mjs",
     "verify:installed": "node ./scripts/verify-installed.mjs",

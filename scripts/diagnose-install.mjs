@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -79,11 +80,6 @@ function commandVersion(command, args2 = ["--version"]) {
   };
 }
 
-function marker(source, name, pattern) {
-  const present = typeof pattern === "string" ? source.includes(pattern) : pattern.test(source);
-  return { name, present };
-}
-
 function inspectBundle() {
   if (!exists(bundlePath)) {
     return {
@@ -96,43 +92,20 @@ function inspectBundle() {
     };
   }
 
-  const source = fs.readFileSync(bundlePath, "utf8");
-  const stats = fs.statSync(bundlePath);
-  const markers = [
-    marker(source, "patchMiniMaxPromptCacheBody", "function patchMiniMaxPromptCacheBody(bodyText) {"),
-    marker(source, "promptSurfaceLimits", "function promptSurfaceLimits() {"),
-    marker(source, "compactDescription", "function compactDescription("),
-    marker(source, "annotatePromptCacheTools", "function annotatePromptCacheTools(tools) {"),
-    marker(source, "maxTokenCap8192", "var MINIMAX_DEFAULT_MAX_TOKENS = 8192"),
-    marker(source, "maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"),
-    marker(source, "requestSectionDiagnostics", "sectionBytes"),
-    marker(source, "largestToolDiagnostics", "largestTools"),
-    marker(source, "finalToolDescriptionTrim", "function trimFinalToolDescriptionsForMax(tools) {"),
-    marker(source, "toolTrimDiagnostics", "toolDescriptionsTrimmed"),
-    marker(source, "requestPatcherExport", "patchMiniMaxPromptCacheBody,")
-  ];
-
-  const requiredForPatcher = [
-    "patchMiniMaxPromptCacheBody",
-    "promptSurfaceLimits",
-    "compactDescription",
-    "annotatePromptCacheTools",
-    "maxTokenCap8192"
-  ];
-  const missingRequiredAnchors = requiredForPatcher.filter((name) => !markers.find((m) => m.name === name)?.present);
-  const patchedMarkers = ["finalToolDescriptionTrim", "toolTrimDiagnostics", "requestPatcherExport"];
-  const patched = patchedMarkers.every((name) => markers.find((m) => m.name === name)?.present);
+  const analysis = analyzeBundleFile(bundlePath);
 
   return {
     path: bundlePath,
     exists: true,
-    sizeBytes: stats.size,
-    modified: stats.mtime.toISOString(),
-    sha256: sha256(source),
-    compatible: missingRequiredAnchors.length === 0,
-    patched,
-    markers,
-    missingRequiredAnchors
+    sizeBytes: analysis.sizeBytes,
+    modified: analysis.modified,
+    sha256: analysis.sha256,
+    classification: analysis.classification,
+    compatible: analysis.compatibleWithCurrentPatcher,
+    patched: analysis.finalPatchPresent,
+    stages: analysis.stages,
+    markers: analysis.stages.flatMap((stage) => stage.markers),
+    missingRequiredAnchors: analysis.missingRequiredStages
   };
 }
 
@@ -246,6 +219,7 @@ if (jsonMode) {
   if (report.bundle.exists) {
     console.log(`bundle_sha256=${report.bundle.sha256}`);
     console.log(`bundle_size=${report.bundle.sizeBytes}`);
+    console.log(`bundle_classification=${report.bundle.classification}`);
     console.log(`bundle_compatible=${report.bundle.compatible}`);
     console.log(`bundle_patched=${report.bundle.patched}`);
     for (const item of report.bundle.markers) {
@@ -272,4 +246,3 @@ if (jsonMode) {
 }
 
 process.exit(report.summary.ok ? 0 : 2);
-
