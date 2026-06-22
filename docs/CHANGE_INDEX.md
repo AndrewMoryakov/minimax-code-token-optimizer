@@ -97,6 +97,12 @@ compatible bundles. It shortens verbose tool descriptions and nested schema
 descriptions while preserving the original `output.parameters` object and its
 annotations.
 
+### Memory Caps
+
+The public patcher can add max-profile caps for injected user profile, memory
+tail, and memory summary helpers when those recognizable functions exist. Memory
+stays enabled; only the injected character budgets are bounded in `max`.
+
 ### Prompt Cache Markers
 
 Prompt-cache markers are applied in enforce mode, and provider 4xx errors retry

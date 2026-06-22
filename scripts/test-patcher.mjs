@@ -18,6 +18,17 @@ const fixture = `function compactDescription(text, maxLen) {
 function promptSurfaceLimits() {
   return { profile: "max" };
 }
+var MEMORY_TAIL_INJECTION_CAP_CHARS = 10240;
+var MEMORY_SUMMARY_INJECTION_CAP_CHARS = 20480;
+function promptUserProfileCapChars() {
+  return MEMORY_TAIL_INJECTION_CAP_CHARS;
+}
+function promptMemoryTailCapChars() {
+  return MEMORY_TAIL_INJECTION_CAP_CHARS;
+}
+function promptMemorySummaryCapChars() {
+  return MEMORY_SUMMARY_INJECTION_CAP_CHARS;
+}
 var SKILL_TOOL_DESCRIPTION = "Load a skill by name.";
 function isMiniMaxPromptCacheTarget(input, init) {
   return true;
@@ -122,12 +133,15 @@ assert.ok(firstReport.changes.includes("enabled direct M3 max_tokens clamp"));
 assert.ok(firstReport.changes.includes("upgraded request section/tool diagnostics"));
 assert.ok(firstReport.changes.includes("inserted tool-definition trim helpers"));
 assert.ok(firstReport.changes.includes("enabled tool-definition trim hook"));
+assert.ok(firstReport.changes.includes("capped promptUserProfileCapChars for max profile"));
+assert.ok(firstReport.changes.includes("capped promptMemoryTailCapChars for max profile"));
+assert.ok(firstReport.changes.includes("capped promptMemorySummaryCapChars for max profile"));
 
 analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "fully-patched");
 assert.equal(analysis.finalPatchPresent, true);
 
-fs.appendFileSync(fixturePath, "\nexport { trimToolDefinitionForMax };\n", "utf8");
+fs.appendFileSync(fixturePath, "\nexport { trimToolDefinitionForMax, promptUserProfileCapChars, promptMemoryTailCapChars, promptMemorySummaryCapChars };\n", "utf8");
 const patchedModule = await import(`${pathToFileURL(fixturePath).href}?v=${Date.now()}`);
 const patchedRequest = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
   max_tokens: 32000,
@@ -173,6 +187,9 @@ assert.equal(toolOutput.parameters, params);
 assert.equal(toolOutput.parameters.annotations.marker, true);
 assert.ok(toolOutput.description.length < 140);
 assert.ok(toolOutput.parameters.properties.timeout.description.length < 120);
+assert.equal(patchedModule.promptUserProfileCapChars(), 1200);
+assert.equal(patchedModule.promptMemoryTailCapChars(), 4500);
+assert.equal(patchedModule.promptMemorySummaryCapChars(), 1800);
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);

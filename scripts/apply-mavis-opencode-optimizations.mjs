@@ -337,6 +337,52 @@ function applyToolDefinitionTrim(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function memoryCapFunction(name, fallbackConstant, maxCap) {
+  return `function ${name}() {
+  return promptSurfaceLimits().profile === "max" ? ${maxCap} : ${fallbackConstant};
+}`;
+}
+
+function applyMemoryCaps(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "memory-caps") === "present") {
+    skipped.push("memory caps already present");
+    return { source: out, changed, skipped };
+  }
+
+  const targets = [
+    {
+      name: "promptUserProfileCapChars",
+      fallback: "MEMORY_TAIL_INJECTION_CAP_CHARS",
+      cap: 1200
+    },
+    {
+      name: "promptMemoryTailCapChars",
+      fallback: "MEMORY_TAIL_INJECTION_CAP_CHARS",
+      cap: 4500
+    },
+    {
+      name: "promptMemorySummaryCapChars",
+      fallback: "MEMORY_SUMMARY_INJECTION_CAP_CHARS",
+      cap: 1800
+    }
+  ];
+
+  for (const target2 of targets) {
+    if (out.includes(`function ${target2.name}()`)) {
+      out = replaceFunction(out, target2.name, memoryCapFunction(target2.name, target2.fallback, target2.cap));
+      changed.push(`capped ${target2.name} for max profile`);
+    } else {
+      skipped.push(`memory cap skipped: ${target2.name} not found`);
+    }
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function applyFinalToolDescriptionTrim(source, analysis) {
   let out = source;
   const changed = [];
@@ -460,7 +506,14 @@ function applyStages(source) {
     skipped: toolDefinitionTrim.skipped
   });
   const afterToolDefinitionTrimAnalysis = analyzeBundleSource(toolDefinitionTrim.source);
-  const finalTrim = applyFinalToolDescriptionTrim(toolDefinitionTrim.source, afterToolDefinitionTrimAnalysis);
+  const memoryCaps = applyMemoryCaps(toolDefinitionTrim.source, afterToolDefinitionTrimAnalysis);
+  stages.push({
+    id: "memory-caps",
+    changed: memoryCaps.changed,
+    skipped: memoryCaps.skipped
+  });
+  const afterMemoryCapsAnalysis = analyzeBundleSource(memoryCaps.source);
+  const finalTrim = applyFinalToolDescriptionTrim(memoryCaps.source, afterMemoryCapsAnalysis);
   stages.push({
     id: "final-tool-description-trim",
     changed: finalTrim.changed,
@@ -469,8 +522,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis
