@@ -130,6 +130,11 @@ bodies before they are sent, and can be switched to `enforce` with
 `MAVIS_REQUEST_GUARD_MODE=enforce` to block requests above provider-specific
 body/message byte thresholds.
 
+The same guard is now also installed into the durable bundled
+`@mavis/opencode-plugin` fetch wrapper. This avoids relying on regenerated
+`opencode.json` standalone plugin registration for the main provider request
+path.
+
 ### Patcher Hardening
 
 The patcher now treats request diagnostics as part of the final patch

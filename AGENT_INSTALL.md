@@ -61,11 +61,11 @@ Expected diagnostic signals:
 - `opencode_plugins_registered=true` is useful, but not durable on every
   MiniMax Desktop restart because Desktop can regenerate `opencode.json`.
 
-`request-guard` defaults to observe mode. Set
+The durable bundle patch includes the provider request guard. The standalone
+`request-guard.js` plugin is useful when it loads, but it is not the only
+protection path. Request guard defaults to observe mode. Set
 `MAVIS_REQUEST_GUARD_MODE=enforce` only after the user accepts that oversized
-provider requests may be blocked before they are sent. If Desktop regenerates
-`opencode.json`, standalone plugins may need a runtime-specific registration
-hook before they load.
+provider requests may be blocked before they are sent.
 
 5. Manual fallback commands.
 

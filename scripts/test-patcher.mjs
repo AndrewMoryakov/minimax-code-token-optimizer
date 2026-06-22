@@ -72,6 +72,29 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   const tools = annotatePromptCacheTools(parsed.tools);
   return { body: JSON.stringify(parsed), details, changed, added: added + tools.added };
 }
+function applyMiniMaxPromptCache(input, init) {
+  return { init, mode: "enforce", added: 0, changed: false, details: {} };
+}
+function extractSessionId() {
+  return "synthetic-session";
+}
+function buildProviderRequestDiagnostic() {
+  return {};
+}
+function logToFile() {}
+function installStreamProgressFetchPatch() {
+  const current = globalThis.fetch;
+  const originalFetch = current.bind(globalThis);
+  const wrapped = async (input, init) => {
+    const sessionId = extractSessionId(input, init);
+    const promptCachePatch = applyMiniMaxPromptCache(input, init);
+    const effectiveInit = promptCachePatch.init;
+    const requestDiagnostic = sessionId ? buildProviderRequestDiagnostic(input, effectiveInit) : void 0;
+    const res = await originalFetch(input, effectiveInit);
+    return requestDiagnostic ? res : res;
+  };
+  globalThis.fetch = wrapped;
+}
 function injectDynamicBlocks() {}
 function transformSystemPrompt(input) {
   let prompt = input.agentInstructions?.trim() || input.systemPrompt?.trim() || "";
@@ -148,6 +171,8 @@ assert.equal(firstReport.afterClassification, "fully-patched");
 assert.ok(firstReport.changes.includes("inserted direct M3 default max_tokens cap"));
 assert.ok(firstReport.changes.includes("enabled direct M3 max_tokens clamp"));
 assert.ok(firstReport.changes.includes("upgraded request section/tool diagnostics"));
+assert.ok(firstReport.changes.includes("inserted bundle request guard helpers"));
+assert.ok(firstReport.changes.includes("enabled bundle provider request guard preflight"));
 assert.ok(firstReport.changes.includes("inserted tool-definition trim helpers"));
 assert.ok(firstReport.changes.includes("enabled tool-definition trim hook"));
 assert.ok(firstReport.changes.includes("capped promptUserProfileCapChars for max profile"));
@@ -164,8 +189,36 @@ const missingDiagnosticsAnalysis = analyzeBundleSource(fs.readFileSync(fixturePa
 assert.equal(missingDiagnosticsAnalysis.finalPatchPresent, false);
 assert.equal(missingDiagnosticsAnalysis.classification, "partially-patched");
 
-fs.appendFileSync(fixturePath, "\nexport { trimToolDefinitionForMax, promptUserProfileCapChars, promptMemoryTailCapChars, promptMemorySummaryCapChars };\n", "utf8");
+fs.appendFileSync(fixturePath, "\nexport { mavisBuildRequestGuardDecision, trimToolDefinitionForMax, promptUserProfileCapChars, promptMemoryTailCapChars, promptMemorySummaryCapChars };\n", "utf8");
 const patchedModule = await import(`${pathToFileURL(fixturePath).href}?v=${Date.now()}`);
+const directGuardDecision = patchedModule.mavisBuildRequestGuardDecision(
+  "https://agent.minimax.io/mavis/api/v1/llm/v1/messages",
+  {
+    method: "POST",
+    body: JSON.stringify({
+      model: "MiniMax-M3",
+      messages: [{ role: "user", content: "x".repeat(200000) }]
+    })
+  }
+);
+assert.equal(directGuardDecision.target, true);
+assert.equal(directGuardDecision.provider, "minimax");
+assert.equal(directGuardDecision.mode, "observe");
+assert.equal(directGuardDecision.overBudget, true);
+assert.equal(directGuardDecision.action, "observe");
+const openRouterGuardDecision = patchedModule.mavisBuildRequestGuardDecision(
+  "https://openrouter.ai/api/v1/chat/completions",
+  {
+    method: "POST",
+    body: JSON.stringify({
+      model: "openrouter/deepseek/deepseek-v4-flash",
+      messages: [{ role: "user", content: "x".repeat(90000) }]
+    })
+  }
+);
+assert.equal(openRouterGuardDecision.target, true);
+assert.equal(openRouterGuardDecision.provider, "openrouter");
+assert.equal(openRouterGuardDecision.overBudget, true);
 const patchedRequest = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
   max_tokens: 32000,
   tools: [{ name: "skill", description: "verbose skill description ".repeat(100) }]

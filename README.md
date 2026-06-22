@@ -98,8 +98,10 @@ The installer also makes a best-effort registration of standalone plugins in
 `%USERPROFILE%\.mavis\agents\mavis\opencode\opencode.json` after `mavis`:
 `openrouter-lifecycle`, `prompt-surface`, `request-guard`, and `prompt-cache`.
 MiniMax Desktop may regenerate this file on worker restart, so the durable
-optimizations are the guarded bundle patch stages; standalone plugin
-registration should be verified with `diagnose-install.mjs`.
+optimizations are the guarded bundle patch stages. The provider request guard
+is also installed into the durable bundle patcher, so oversized MiniMax and
+OpenRouter requests can still be observed or blocked even if Desktop rewrites
+the standalone plugin list.
 
 ## Install / Use
 
@@ -162,6 +164,20 @@ Verify installed bundle markers:
 
 ```powershell
 node .\scripts\verify-installed.mjs
+```
+
+Request guard modes:
+
+```powershell
+# default: observe oversized provider requests and log request_guard_over_budget
+$env:MAVIS_REQUEST_GUARD_MODE = "observe"
+
+# optional: block oversized provider requests before they are sent
+$env:MAVIS_REQUEST_GUARD_MODE = "enforce"
+
+# optional per-provider limits, bytes
+$env:MAVIS_REQUEST_GUARD_MINIMAX_MAX_BODY_BYTES = "200000"
+$env:MAVIS_REQUEST_GUARD_OPENROUTER_MAX_BODY_BYTES = "80000"
 ```
 
 Run the synthetic patcher regression test:

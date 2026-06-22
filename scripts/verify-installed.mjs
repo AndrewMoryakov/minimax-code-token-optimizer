@@ -49,6 +49,9 @@ check(source.includes("toolDescriptionsTrimmed"), "tool trim diagnostics present
 check(source.includes("patchMiniMaxPromptCacheBody,"), "request patcher exported for smoke tests");
 check(source.includes("sectionBytes"), "request section-byte diagnostics present");
 check(source.includes("largestTools"), "largest tool diagnostics present");
+check(source.includes("function mavisBuildRequestGuardDecision(input, init) {"), "bundle request guard decision present");
+check(source.includes('event: "request_guard_over_budget"'), "bundle request guard over-budget event present");
+check(source.includes('event: "request_guard_blocked"'), "bundle request guard blocked event present");
 check(!source.includes("ghp_"), "no GitHub token literal present");
 check(!source.includes("sk-or-"), "no common OpenRouter key literal present");
 
@@ -58,4 +61,3 @@ console.log(`sha256=${sha256(source)}`);
 if (process.exitCode) {
   process.exit(process.exitCode);
 }
-

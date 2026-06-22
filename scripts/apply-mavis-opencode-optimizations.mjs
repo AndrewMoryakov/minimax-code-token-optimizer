@@ -302,6 +302,177 @@ function applyRequestDiagnostics(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function requestGuardHelpers() {
+  return `function mavisRequestGuardMode() {
+  const mode = process.env.MAVIS_REQUEST_GUARD_MODE || "observe";
+  return mode === "enforce" || mode === "off" ? mode : "observe";
+}
+function mavisRequestGuardEnvNumber(name, fallback) {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+function mavisRequestGuardLimits(provider) {
+  const prefix = provider === "openrouter" ? "OPENROUTER" : "MINIMAX";
+  const fallbackBody = provider === "openrouter" ? 80000 : 200000;
+  const fallbackMessages = provider === "openrouter" ? 80000 : 180000;
+  return {
+    bodyBytes: mavisRequestGuardEnvNumber(\`MAVIS_REQUEST_GUARD_\${prefix}_MAX_BODY_BYTES\`, fallbackBody),
+    messageBytes: mavisRequestGuardEnvNumber(\`MAVIS_REQUEST_GUARD_\${prefix}_MAX_MESSAGE_BYTES\`, fallbackMessages)
+  };
+}
+function mavisRequestGuardProvider(input, init) {
+  const url = typeof input === "string" ? input : input?.url;
+  if (typeof url !== "string") return null;
+  const method = (init?.method || input?.method || "GET").toUpperCase();
+  if (method !== "POST") return null;
+  try {
+    const parsed = new URL(url, "http://placeholder.local");
+    if ((parsed.hostname === "agent.minimax.io" || parsed.hostname === "agent.minimaxi.com") && /\\/v1\\/messages\\/?$/.test(parsed.pathname)) return "minimax";
+    if (parsed.hostname === "openrouter.ai" && /\\/api\\/v1\\/chat\\/completions\\/?$/.test(parsed.pathname)) return "openrouter";
+  } catch {
+  }
+  return null;
+}
+function mavisRequestGuardJsonBytes(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return 0;
+  }
+}
+function mavisRequestGuardSummary(bodyText) {
+  const summary = {
+    bodyBytes: Buffer.byteLength(String(bodyText || ""), "utf8"),
+    parseOk: false,
+    model: void 0,
+    messageBytes: 0,
+    systemBytes: 0,
+    toolBytes: 0,
+    messagesCount: 0,
+    toolsCount: 0
+  };
+  try {
+    const parsed = JSON.parse(bodyText);
+    summary.parseOk = true;
+    summary.model = typeof parsed.model === "string" ? parsed.model : void 0;
+    summary.messageBytes = mavisRequestGuardJsonBytes(parsed.messages);
+    summary.systemBytes = mavisRequestGuardJsonBytes(parsed.system);
+    summary.toolBytes = mavisRequestGuardJsonBytes(parsed.tools);
+    summary.messagesCount = Array.isArray(parsed.messages) ? parsed.messages.length : 0;
+    summary.toolsCount = Array.isArray(parsed.tools) ? parsed.tools.length : 0;
+  } catch {
+  }
+  return summary;
+}
+function mavisBuildRequestGuardDecision(input, init) {
+  const mode = mavisRequestGuardMode();
+  if (process.env.MAVIS_REQUEST_GUARD_DISABLED === "1" || mode === "off") {
+    return { target: false, mode, disabled: true };
+  }
+  const provider = mavisRequestGuardProvider(input, init);
+  const body = init?.body;
+  if (!provider || typeof body !== "string") {
+    return { target: false, mode, disabled: false };
+  }
+  const summary = mavisRequestGuardSummary(body);
+  const limits = mavisRequestGuardLimits(provider);
+  const reasons = [];
+  if (summary.bodyBytes > limits.bodyBytes) reasons.push(\`bodyBytes \${summary.bodyBytes} > \${limits.bodyBytes}\`);
+  if (summary.messageBytes > limits.messageBytes) reasons.push(\`messageBytes \${summary.messageBytes} > \${limits.messageBytes}\`);
+  return {
+    target: true,
+    mode,
+    provider,
+    summary,
+    limits,
+    overBudget: reasons.length > 0,
+    action: mode === "enforce" ? "block" : "observe",
+    reasons
+  };
+}
+function mavisRequestGuardBlockedResponse(decision) {
+  return new Response(JSON.stringify({
+    error: {
+      type: "mavis_request_guard_blocked",
+      message: \`Request blocked by Mavis request guard for \${decision.provider}: \${decision.reasons.join("; ")}\`,
+      provider: decision.provider,
+      summary: decision.summary,
+      limits: decision.limits
+    }
+  }), {
+    status: 413,
+    statusText: "Request Entity Too Large",
+    headers: { "content-type": "application/json" }
+  });
+}
+`;
+}
+
+function applyBundleRequestGuard(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "bundle-request-guard") === "present") {
+    skipped.push("bundle request guard already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function mavisBuildRequestGuardDecision(input, init) {")) {
+    out = replaceOnce(
+      out,
+      "function applyMiniMaxPromptCache(input, init) {",
+      `${requestGuardHelpers()}function applyMiniMaxPromptCache(input, init) {`,
+      "insert bundle request guard helpers"
+    );
+    changed.push("inserted bundle request guard helpers");
+  }
+
+  if (!out.includes('event: "request_guard_over_budget"')) {
+    out = replaceOnce(
+      out,
+      "    const requestDiagnostic = sessionId ? buildProviderRequestDiagnostic(input, effectiveInit) : void 0;\n",
+      [
+        "    const requestGuardDecision = mavisBuildRequestGuardDecision(input, effectiveInit);",
+        "    if (sessionId && requestGuardDecision.target && requestGuardDecision.overBudget) {",
+        "      logToFile({",
+        '        level: requestGuardDecision.mode === "enforce" ? "warn" : "info",',
+        '        event: "request_guard_over_budget",',
+        "        sessionId,",
+        "        provider: requestGuardDecision.provider,",
+        "        action: requestGuardDecision.action,",
+        "        ...requestGuardDecision.summary,",
+        "        limits: requestGuardDecision.limits,",
+        "        reasons: requestGuardDecision.reasons,",
+        '        message: "provider request exceeds request-guard byte thresholds"',
+        "      });",
+        "    }",
+        '    if (requestGuardDecision.target && requestGuardDecision.overBudget && requestGuardDecision.mode === "enforce") {',
+        "      if (sessionId) {",
+        "        logToFile({",
+        '          level: "warn",',
+        '          event: "request_guard_blocked",',
+        "          sessionId,",
+        "          provider: requestGuardDecision.provider,",
+        "          action: requestGuardDecision.action,",
+        "          ...requestGuardDecision.summary,",
+        "          limits: requestGuardDecision.limits,",
+        "          reasons: requestGuardDecision.reasons,",
+        '          message: "provider request blocked before send"',
+        "        });",
+        "      }",
+        "      return mavisRequestGuardBlockedResponse(requestGuardDecision);",
+        "    }",
+        "    const requestDiagnostic = sessionId ? buildProviderRequestDiagnostic(input, effectiveInit) : void 0;"
+      ].join("\n") + "\n",
+      "insert bundle request guard preflight"
+    );
+    changed.push("enabled bundle provider request guard preflight");
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function toolDefinitionTrimHelpers() {
   return `function trimSchemaDescriptionsForMax(value, maxLen = 80) {
   if (!value || typeof value !== "object") return value;
@@ -659,7 +830,14 @@ function applyStages(source) {
     skipped: diagnostics.skipped
   });
   const afterDiagnosticsAnalysis = analyzeBundleSource(diagnostics.source);
-  const toolDefinitionTrim = applyToolDefinitionTrim(diagnostics.source, afterDiagnosticsAnalysis);
+  const requestGuard = applyBundleRequestGuard(diagnostics.source, afterDiagnosticsAnalysis);
+  stages.push({
+    id: "bundle-request-guard",
+    changed: requestGuard.changed,
+    skipped: requestGuard.skipped
+  });
+  const afterRequestGuardAnalysis = analyzeBundleSource(requestGuard.source);
+  const toolDefinitionTrim = applyToolDefinitionTrim(requestGuard.source, afterRequestGuardAnalysis);
   stages.push({
     id: "tool-definition-trim",
     changed: toolDefinitionTrim.changed,
@@ -689,8 +867,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...diagnostics.changed, ...requestGuard.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...requestGuard.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis

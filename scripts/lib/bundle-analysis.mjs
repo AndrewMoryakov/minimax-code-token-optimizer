@@ -42,6 +42,17 @@ export const STAGES = [
     ]
   },
   {
+    id: "bundle-request-guard",
+    label: "Bundle provider request guard",
+    appliedByCurrentPatcher: true,
+    markers: [
+      ["mavisRequestGuardMode", "function mavisRequestGuardMode() {"],
+      ["mavisBuildRequestGuardDecision", "function mavisBuildRequestGuardDecision(input, init) {"],
+      ["requestGuardOverBudgetEvent", "request_guard_over_budget"],
+      ["requestGuardBlockedEvent", "request_guard_blocked"]
+    ]
+  },
+  {
     id: "tool-definition-trim",
     label: "Tool definition trim",
     appliedByCurrentPatcher: true,
