@@ -47,6 +47,7 @@ instead of corrupting the install.
 ## Repository Contents
 
 ```text
+AGENT_INSTALL.md                   # shortest install instructions for AI agents
 plugins/
   openrouter-lifecycle.js       # lifecycle model routing plugin
   prompt-cache.js               # direct-M3 prompt cache marker plugin
@@ -60,6 +61,22 @@ scripts/
 docs/
   CHANGE_INDEX.md
 ```
+
+## AI Agent Quick Install
+
+For an existing Windows MiniMax Code install:
+
+```powershell
+git clone https://github.com/AndrewMoryakov/minimax-code-token-optimizer.git
+cd minimax-code-token-optimizer
+node .\scripts\apply-mavis-opencode-optimizations.mjs
+powershell -ExecutionPolicy Bypass -File .\scripts\install-user-plugins.ps1
+node .\scripts\verify-installed.mjs
+powershell -ExecutionPolicy Bypass -File .\scripts\reload-opencode-worker.ps1
+```
+
+If the patcher reports missing anchors, stop: that MiniMax bundle version needs
+a new compatibility pass. See `AGENT_INSTALL.md` for the concise full checklist.
 
 ## Install / Use
 
