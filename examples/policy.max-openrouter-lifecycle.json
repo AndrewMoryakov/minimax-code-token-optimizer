@@ -1,0 +1,23 @@
+{
+  "profile": "max",
+  "profiles_note": {
+    "max": "Maximum economy. Target total provider input context per session: 1,000,000 tokens.",
+    "medium": "Balanced default. Target total provider input context per session: 3,000,000 tokens.",
+    "free": "More permissive mode. Target total provider input context per session: 10,000,000 tokens."
+  },
+  "openrouter_lifecycle": {
+    "enabled": true,
+    "reason": "Route non-main OpenCode lifecycle agents to lower-cost OpenRouter models. Keep the main session on direct agent.minimax.io so MiniMax-specific patches can target the dominant input cost.",
+    "key_source": "Desktop/minimax_openrouter_key.txt or OPENROUTER_API_KEY/MAVIS_OPENROUTER_API_KEY",
+    "prompt_cache_note": "MiniMax prompt-cache patch targets agent.minimax.io. OpenRouter prompt-cache mutation is opt-in via MAVIS_PROMPT_CACHE_OPENROUTER=1 because support varies by model/provider path.",
+    "routing": {
+      "main": "minimax/MiniMax-M3",
+      "small": "openrouter/qwen/qwen3-30b-a3b-instruct-2507",
+      "plan": "openrouter/deepseek/deepseek-v3.2",
+      "build": "openrouter/minimax/minimax-m3",
+      "general": "openrouter/deepseek/deepseek-v4-flash",
+      "explore": "openrouter/deepseek/deepseek-v4-flash"
+    }
+  }
+}
+

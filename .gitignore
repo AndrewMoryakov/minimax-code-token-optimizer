@@ -1,0 +1,12 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+*.local
+*.log
+backups/
+dist/
+.env
+*.key
+*openrouter_key*
+minimax_openrouter_key.txt
+
