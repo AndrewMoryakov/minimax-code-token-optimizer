@@ -195,6 +195,10 @@ is also installed into the durable bundle patcher, so oversized MiniMax and
 OpenRouter requests can still be observed or blocked even if Desktop rewrites
 the standalone plugin list.
 
+After a MiniMax Code update or reinstall, use
+[`docs/RESTORE_AFTER_UPDATE.md`](docs/RESTORE_AFTER_UPDATE.md) to reapply and
+verify the optimizer.
+
 ## Profiles
 
 Profiles control how aggressively the prompt surface is reduced.
