@@ -4,6 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`Verify installed MiniMax optimizer bundle markers
+
+Usage:
+  node .\\scripts\\verify-installed.mjs [options]
+
+Options:
+  --target <path>    Custom @mavis/opencode-plugin index.js path
+  --help, -h         Show this help
+`);
+  process.exit(0);
+}
+
 const target = path.resolve(
   process.argv.includes("--target")
     ? process.argv[process.argv.indexOf("--target") + 1]

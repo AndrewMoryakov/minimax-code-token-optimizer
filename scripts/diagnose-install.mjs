@@ -9,6 +9,10 @@ import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
+  if (arg === "-h") {
+    args.set("help", "1");
+    continue;
+  }
   if (!arg.startsWith("--")) continue;
   const key = arg.slice(2);
   const next = process.argv[i + 1];
@@ -18,6 +22,29 @@ for (let i = 2; i < process.argv.length; i += 1) {
     args.set(key, next);
     i += 1;
   }
+}
+
+function usage() {
+  console.log(`MiniMax Code Token Optimizer diagnostic
+
+Usage:
+  node .\\scripts\\diagnose-install.mjs [options]
+
+Options:
+  --json                 Print machine-readable JSON
+  --mavis-root <path>    Mavis root. Default: %USERPROFILE%\\.mavis\\agents\\mavis
+  --target <path>        Custom @mavis/opencode-plugin index.js path
+  --help, -h             Show this help
+
+Exit codes:
+  0  Installed or compatible state
+  2  Issues found; read issues/warnings/nextAction
+`);
+}
+
+if (args.has("help")) {
+  usage();
+  process.exit(0);
 }
 
 const jsonMode = args.has("json");

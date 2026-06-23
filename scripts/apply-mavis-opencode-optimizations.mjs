@@ -7,6 +7,10 @@ import { analyzeBundleSource, sha256 } from "./lib/bundle-analysis.mjs";
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
+  if (arg === "-h") {
+    args.set("help", "1");
+    continue;
+  }
   if (!arg.startsWith("--")) continue;
   const key = arg.slice(2);
   const next = process.argv[i + 1];
@@ -16,6 +20,30 @@ for (let i = 2; i < process.argv.length; i += 1) {
     args.set(key, next);
     i += 1;
   }
+}
+
+function usage() {
+  console.log(`Apply MiniMax bundled-plugin optimization patch
+
+Usage:
+  node .\\scripts\\apply-mavis-opencode-optimizations.mjs [options]
+
+Options:
+  --dry-run          Preview patch result without writing
+  --json             Print machine-readable report
+  --target <path>    Custom @mavis/opencode-plugin index.js path
+  --help, -h         Show this help
+
+Notes:
+  This script patches only a local installed MiniMax bundle.
+  It creates a timestamped backup before writing.
+  It stops if expected anchors are missing.
+`);
+}
+
+if (args.has("help")) {
+  usage();
+  process.exit(0);
 }
 
 const defaultTarget = path.join(

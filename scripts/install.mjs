@@ -9,6 +9,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
+  if (arg === "-h") {
+    args.set("help", "1");
+    continue;
+  }
   if (!arg.startsWith("--")) continue;
   const key = arg.slice(2);
   const next = process.argv[i + 1];
@@ -18,6 +22,41 @@ for (let i = 2; i < process.argv.length; i += 1) {
     args.set(key, next);
     i += 1;
   }
+}
+
+function usage() {
+  console.log(`MiniMax Code Token Optimizer installer
+
+Usage:
+  node .\\scripts\\install.mjs [options]
+
+Safe first run:
+  node .\\scripts\\diagnose-install.mjs
+  node .\\scripts\\install.mjs --profile max --dry-run
+  node .\\scripts\\install.mjs --profile max --reload
+
+Options:
+  --profile <max|medium|free>       Economy profile. Default: max
+  --dry-run                         Preview changes without writing files
+  --reload                          Reload OpenCode worker after verification
+  --mavis-root <path>               Mavis root. Default: %USERPROFILE%\\.mavis\\agents\\mavis
+  --target <path>                   Custom @mavis/opencode-plugin index.js path
+  --skip-policy                     Do not merge policy.json
+  --skip-plugins                    Do not copy standalone plugins
+  --skip-plugin-registration        Do not edit generated opencode.json
+  --skip-bundle                     Do not patch bundled @mavis/opencode-plugin
+  --skip-verify                     Skip post-install verification
+  --help, -h                        Show this help
+
+Notes:
+  The installer creates backups before writing.
+  If bundle anchors are missing, it stops instead of forcing a patch.
+`);
+}
+
+if (args.has("help")) {
+  usage();
+  process.exit(0);
 }
 
 const profile = args.get("profile") ?? "max";
