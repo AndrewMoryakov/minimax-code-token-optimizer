@@ -6,11 +6,58 @@ MiniMax Code / Mavis token consumption.
 This repository is based on a local optimization pass that reduced tiny fresh
 direct-M3 request input from `26147` tokens to `7550` tokens in canary tests.
 
+## Who This Is For
+
+Use this repository if you run MiniMax Code on Windows and want a safer,
+repeatable way to reduce how much context MiniMax Code sends to model
+providers. You do not need to know the MiniMax internals before starting, but
+you should be comfortable running PowerShell commands and reading command
+output.
+
+If you are an AI agent installing this for a user, start with
+`AGENT_INSTALL.md`. It is the shorter operational checklist. This README
+explains the background, safety model, and manual commands.
+
 ## Project Status
 
 Windows-first, experimental, and actively compatibility-gated. The installer
 backs up files and aborts when expected MiniMax bundle anchors are missing. The
 repo does not ship MiniMax vendor bundles or API keys.
+
+## Prerequisites
+
+- Windows with MiniMax Code / Mavis already installed.
+- Node.js available as `node`.
+- Git available as `git`.
+- PowerShell for the helper scripts.
+- Optional: OpenRouter API key if you want non-main lifecycle roles routed
+  through OpenRouter.
+
+Check the local machine:
+
+```powershell
+node --version
+git --version
+mavis --version
+```
+
+## Terms Used Here
+
+- `MiniMax Code` / `Mavis`: the local coding agent runtime this project patches.
+- `OpenCode`: the provider/tool execution layer inside MiniMax Code.
+- `direct M3`: requests sent directly to `agent.minimax.io` using
+  `minimax/MiniMax-M3`.
+- `OpenRouter`: optional third-party routing for cheaper or smaller non-main
+  lifecycle roles.
+- `main session`: the primary chat/coding conversation. This project keeps it
+  on direct M3.
+- `lifecycle roles`: helper roles such as `plan`, `build`, `general`,
+  `explore`, and `small`.
+- `bundle patch`: a guarded edit to the installed local
+  `@mavis/opencode-plugin` file. The patcher creates a backup first.
+- `standalone plugins`: extra `.js` plugins copied into the user's Mavis
+  plugin directory. MiniMax Desktop can regenerate `opencode.json`, so these
+  are useful but less durable than the bundle patch.
 
 ## What This Does
 
@@ -51,6 +98,23 @@ trim, max-profile memory caps, max-profile static prompt compaction, and final
 tool-description trim. If a future or older bundle lacks required anchors, the
 patcher aborts with a clear message instead of corrupting the install.
 
+## What Changes On Disk
+
+The installer can update these local user/machine files:
+
+```text
+MiniMax installed bundle:
+  %LOCALAPPDATA%\Programs\MiniMax Code\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js
+
+Mavis user config and plugins:
+  %USERPROFILE%\.mavis\agents\mavis\context-budget\config\policy.json
+  %USERPROFILE%\.mavis\agents\mavis\opencode\plugins\*.js
+  %USERPROFILE%\.mavis\agents\mavis\opencode\opencode.json
+```
+
+Before writing, the installer creates timestamped backups next to the target
+files. It does not modify or publish MiniMax vendor source in this repository.
+
 ## Repository Contents
 
 ```text
@@ -74,6 +138,34 @@ docs/
   CHANGE_INDEX.md
   COMPATIBILITY.md
 ```
+
+## Safe Quick Start
+
+For a first install, prefer this sequence:
+
+```powershell
+git clone https://github.com/AndrewMoryakov/minimax-code-token-optimizer.git
+cd minimax-code-token-optimizer
+
+# 1. Inspect the local MiniMax install. Exit code 2 can be normal before install.
+node .\scripts\diagnose-install.mjs
+
+# 2. Preview what the installer would do.
+node .\scripts\install.mjs --profile max --dry-run
+
+# 3. Apply the patch.
+node .\scripts\install.mjs --profile max
+
+# 4. Reload the OpenCode worker so the running process picks up the patched bundle.
+powershell -ExecutionPolicy Bypass -File .\scripts\reload-opencode-worker.ps1
+
+# 5. Verify.
+node .\scripts\diagnose-install.mjs
+```
+
+Use `--profile medium` for a less aggressive default. Use `--reload` on the
+installer if you want it to run the worker reload step automatically after
+verification.
 
 ## AI Agent Quick Install
 
@@ -102,6 +194,18 @@ optimizations are the guarded bundle patch stages. The provider request guard
 is also installed into the durable bundle patcher, so oversized MiniMax and
 OpenRouter requests can still be observed or blocked even if Desktop rewrites
 the standalone plugin list.
+
+## Profiles
+
+Profiles control how aggressively the prompt surface is reduced.
+
+| Profile | Intended use | Target behavior |
+|---|---|---|
+| `max` | Maximum economy | Strong prompt, memory, skill, MCP, and tool trimming. Best for cost control. |
+| `medium` | Balanced daily use | Keeps more prompt surface while still applying the main savings. |
+| `free` | More permissive | Lowest interference, useful when debugging optimizer side effects. |
+
+The current measured canary result in this README is for `max`.
 
 ## Install / Use
 
@@ -276,6 +380,27 @@ Look for:
 - logs include `model_stream_request_start`;
 - logs include `sectionBytes` and `largestTools`;
 - `tool` section is much smaller than the original 60K+ byte payload.
+
+If `cacheWriteTokens` and `cacheReadTokens` stay at `0`, do not treat that as a
+failed install. The prompt-cache path is still under investigation. The primary
+proven saving is the smaller request context.
+
+## Troubleshooting
+
+If `diagnose-install.mjs` exits with code `2`, read the printed issue list and
+`next_action`. This usually means the patch is not installed yet or the local
+MiniMax bundle is not compatible with the current patcher.
+
+If the patcher says anchors are missing, stop and do not force the patch. That
+MiniMax version needs a compatibility pass.
+
+If standalone plugins disappear from `opencode.json` after a MiniMax Desktop
+restart, that is expected on some versions. The durable bundle patch remains the
+main protection path.
+
+If requests are too large, keep `MAVIS_REQUEST_GUARD_MODE=observe` first and
+review `request_guard_over_budget` log events. Switch to `enforce` only when you
+accept that oversized provider requests may be blocked before they are sent.
 
 ## What Is Not Proven Yet
 
