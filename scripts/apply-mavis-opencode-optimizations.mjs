@@ -103,6 +103,167 @@ function ensurePrerequisites(source) {
   return analysis;
 }
 
+function compatibilityBootstrapHelpers() {
+  return `function promptSurfaceLimits() {
+  const envProfile = process.env.MAVIS_CONTEXT_BUDGET_PROFILE;
+  if (envProfile === "max" || envProfile === "medium" || envProfile === "free") return { profile: envProfile };
+  try {
+    const policyPath = path2.join(getPluginDataDir(), "agents", "mavis", "context-budget", "config", "policy.json");
+    const policy = JSON.parse(readFileSync(policyPath, "utf8"));
+    const profile = policy?.profile;
+    if (profile === "max" || profile === "medium" || profile === "free") return { profile };
+  } catch {
+  }
+  return { profile: "max" };
+}
+function isMiniMaxPromptCacheTarget(input, init) {
+  const url = typeof input === "string" ? input : input?.url;
+  if (typeof url !== "string") return false;
+  const method = (init?.method || input?.method || "GET").toUpperCase();
+  if (method !== "POST") return false;
+  if (typeof init?.body !== "string") return false;
+  try {
+    const parsed = new URL(url, "http://placeholder.local");
+    return (parsed.hostname === "agent.minimax.io" || parsed.hostname === "agent.minimaxi.com") && /\\/v1\\/messages\\/?$/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+function annotatePromptCacheTextBlock(block) {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return false;
+  if (block.type !== "text" || typeof block.text !== "string" || !block.text.trim()) return false;
+  if (block.cache_control?.type === "ephemeral") return false;
+  block.cache_control = { type: "ephemeral" };
+  return true;
+}
+function annotateLastContentBlock(content) {
+  if (Array.isArray(content)) {
+    for (let i = content.length - 1; i >= 0; i -= 1) {
+      if (annotatePromptCacheTextBlock(content[i])) return true;
+    }
+  }
+  return false;
+}
+function annotatePromptCacheTools(tools) {
+  return tools;
+}
+function patchMiniMaxPromptCacheBody(bodyText) {
+  const details = {
+    lastSystem: 0,
+    lastUser: 0,
+    lastTool: 0,
+    maxTokensBefore: void 0,
+    maxTokensAfter: void 0,
+    toolDescriptionsTrimmed: 0
+  };
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return { body: bodyText, changed: false, details };
+  }
+  let changed = false;
+  if (typeof parsed.max_tokens === "number") details.maxTokensBefore = parsed.max_tokens;
+  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
+  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
+  if (typeof parsed.max_tokens === "number" && parsed.max_tokens > maxTokenCap) {
+    parsed.max_tokens = maxTokenCap;
+    details.maxTokensAfter = maxTokenCap;
+    changed = true;
+  } else if (typeof parsed.max_tokens === "number") {
+    details.maxTokensAfter = parsed.max_tokens;
+  }
+  if (annotateLastContentBlock(parsed.system)) {
+    details.lastSystem = 1;
+    changed = true;
+  }
+  if (Array.isArray(parsed.messages)) {
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
+        details.lastUser = 1;
+        changed = true;
+        break;
+      }
+    }
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
+        details.lastTool = 1;
+        changed = true;
+        break;
+      }
+    }
+  }
+  const tools = annotatePromptCacheTools(parsed.tools);
+  if (tools !== parsed.tools) {
+    parsed.tools = tools;
+    changed = true;
+  }
+  return { body: changed ? JSON.stringify(parsed) : bodyText, changed, details };
+}
+function applyMiniMaxPromptCache(input, init) {
+  if (!isMiniMaxPromptCacheTarget(input, init)) return { input, init };
+  const patched = patchMiniMaxPromptCacheBody(init.body);
+  if (!patched.changed) return { input, init };
+  return { input, init: { ...init, body: patched.body }, details: patched.details };
+}
+`;
+}
+
+function applyCompatibilityBootstrap(source) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (!out.includes("function promptSurfaceLimits() {")) {
+    out = replaceOnce(
+      out,
+      "function compactDescription(",
+      `${compatibilityBootstrapHelpers()}function compactDescription(`,
+      "insert compatibility bootstrap helpers"
+    );
+    changed.push("inserted compatibility bootstrap helpers");
+  } else {
+    skipped.push("compatibility bootstrap helpers already present");
+  }
+
+  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+    out = replaceOnce(
+      out,
+      "function promptSurfaceLimits() {",
+      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction promptSurfaceLimits() {",
+      "insert compatibility max token constant"
+    );
+    changed.push("inserted direct M3 default max_tokens cap");
+  }
+
+  if (!out.includes("const promptCachePatch = applyMiniMaxPromptCache(input, init);")) {
+    out = replaceOnce(
+      out,
+      "    const requestDiagnostic = sessionId ? buildProviderRequestDiagnostic(input, init) : void 0;\n",
+      [
+        "    const promptCachePatch = applyMiniMaxPromptCache(input, init);",
+        "    input = promptCachePatch.input;",
+        "    const effectiveInit = promptCachePatch.init;",
+        "    const requestDiagnostic = sessionId ? buildProviderRequestDiagnostic(input, effectiveInit) : void 0;"
+      ].join("\n") + "\n",
+      "insert compatibility request-body patch call"
+    );
+    out = replaceOnce(
+      out,
+      "    const res = await originalFetch(input, init);\n",
+      "    const res = await originalFetch(input, effectiveInit);\n",
+      "route fetch through compatibility effective init"
+    );
+    changed.push("enabled compatibility request-body patch call");
+  } else {
+    skipped.push("compatibility request-body patch call already present");
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function stageStatus(analysis, id) {
   return analysis.stages.find((stage) => stage.id === id)?.status ?? "missing";
 }
@@ -635,6 +796,36 @@ function applyMemoryCaps(source, analysis) {
     }
   }
 
+  if (!out.includes('MEMORY_TAIL_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 4500')) {
+    const tailNeedle = "    MEMORY_TAIL_INJECTION_CAP_CHARS = 10 * 1024;\n";
+    if (out.includes(tailNeedle)) {
+      out = replaceOnce(
+        out,
+        tailNeedle,
+        '    MEMORY_TAIL_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 4500 : 10 * 1024;\n',
+        "cap memory tail constant"
+      );
+      changed.push("capped MEMORY_TAIL_INJECTION_CAP_CHARS for max profile");
+    } else {
+      skipped.push("memory tail constant cap skipped: anchor not found");
+    }
+  }
+
+  if (!out.includes('MEMORY_SUMMARY_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 1800')) {
+    const summaryNeedle = "    MEMORY_SUMMARY_INJECTION_CAP_CHARS = 4 * 1024;\n";
+    if (out.includes(summaryNeedle)) {
+      out = replaceOnce(
+        out,
+        summaryNeedle,
+        '    MEMORY_SUMMARY_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 1800 : 4 * 1024;\n',
+        "cap memory summary constant"
+      );
+      changed.push("capped MEMORY_SUMMARY_INJECTION_CAP_CHARS for max profile");
+    } else {
+      skipped.push("memory summary constant cap skipped: anchor not found");
+    }
+  }
+
   return { source: out, changed, skipped };
 }
 
@@ -842,9 +1033,15 @@ function applyFinalToolDescriptionTrim(source, analysis) {
 }
 
 function applyStages(source) {
-  const beforeAnalysis = ensurePrerequisites(source);
+  const bootstrap = applyCompatibilityBootstrap(source);
+  const beforeAnalysis = ensurePrerequisites(bootstrap.source);
   const stages = [];
-  const outputCap = applyDirectM3OutputCap(source, beforeAnalysis);
+  stages.push({
+    id: "compatibility-bootstrap",
+    changed: bootstrap.changed,
+    skipped: bootstrap.skipped
+  });
+  const outputCap = applyDirectM3OutputCap(bootstrap.source, beforeAnalysis);
   stages.push({
     id: "direct-m3-output-cap",
     changed: outputCap.changed,

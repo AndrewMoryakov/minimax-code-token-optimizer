@@ -272,12 +272,15 @@ console.log(`profile=${profile}`);
 if (dryRun) console.log("mode=dry-run");
 
 const initial = parseDiagnose();
-if (!initial.bundle.exists || !initial.bundle.compatible) {
+if (!initial.bundle.exists && !skipBundle) {
   fail([
-    "MiniMax bundle is not compatible with this installer.",
+    "MiniMax bundled opencode plugin was not found.",
     ...(initial.summary?.issues ?? []),
-    "Run diagnose-install.mjs and do a compatibility pass for this MiniMax Code version."
+    "Install MiniMax Code or pass --target to the installed @mavis/opencode-plugin index.js."
   ].join("\n"));
+}
+if (initial.bundle.exists && !initial.bundle.compatible && !skipBundle) {
+  console.log("bundle_preflight=compatibility-bootstrap-required");
 }
 validateInstallPlan();
 

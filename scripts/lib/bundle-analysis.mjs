@@ -86,9 +86,8 @@ export const STAGES = [
     label: "Max-profile memory caps",
     appliedByCurrentPatcher: true,
     markers: [
-      ["userProfileCap1200", 'profile === "max" ? 1200'],
-      ["memoryTailCap4500", 'profile === "max" ? 4500'],
-      ["memorySummaryCap1800", 'profile === "max" ? 1800']
+      ["memoryTailCap4500", 'MEMORY_TAIL_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 4500'],
+      ["memorySummaryCap1800", 'MEMORY_SUMMARY_INJECTION_CAP_CHARS = promptSurfaceLimits().profile === "max" ? 1800']
     ]
   },
   {
