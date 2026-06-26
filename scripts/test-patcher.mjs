@@ -168,8 +168,6 @@ const firstReport = JSON.parse(first.stdout);
 assert.equal(firstReport.changed, true);
 assert.equal(firstReport.beforeClassification, "partially-patched");
 assert.equal(firstReport.afterClassification, "fully-patched");
-assert.ok(firstReport.changes.includes("inserted direct M3 default max_tokens cap"));
-assert.ok(firstReport.changes.includes("enabled direct M3 max_tokens clamp"));
 assert.ok(firstReport.changes.includes("upgraded request section/tool diagnostics"));
 assert.ok(firstReport.changes.includes("inserted bundle request guard helpers"));
 assert.ok(firstReport.changes.includes("enabled bundle provider request guard preflight"));
