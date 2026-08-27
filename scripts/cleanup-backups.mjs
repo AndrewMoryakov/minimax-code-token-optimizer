@@ -112,11 +112,8 @@ function cleanDir(dir, keep) {
     console.log(`absent=${dir}`);
     return { scanned: 0, removed: 0, kept: 0 };
   }
-  const stat = fs.statSync(dir);
-  if (!stat.isDirectory()) {
-    console.log(`skip_not_dir=${dir}`);
-    return { scanned: 0, removed: 0, kept: 0 };
-  }
+  // fs.readdirSync on a non-directory would throw ENOTDIR; no extra
+  // isDirectory() check needed.
   const entries = fs.readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => {
@@ -127,21 +124,23 @@ function cleanDir(dir, keep) {
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   const survivors = entries.slice(0, keep);
   const doomed = entries.slice(keep);
+  let actuallyRemoved = 0;
   for (const file of doomed) {
-    if (apply) {
-      try {
-        fs.unlinkSync(file.path);
-        console.log(`removed=${file.path} (${file.sizeBytes} bytes)`);
-      } catch (err) {
-        console.log(`remove_failed=${file.path} ${err.message}`);
-      }
-    } else {
+    if (!apply) {
       console.log(`would_remove=${file.path} (${file.sizeBytes} bytes)`);
+      continue;
+    }
+    try {
+      fs.unlinkSync(file.path);
+      actuallyRemoved += 1;
+      console.log(`removed=${file.path} (${file.sizeBytes} bytes)`);
+    } catch (err) {
+      console.log(`remove_failed=${file.path} ${err.message}`);
     }
   }
   return {
     scanned: entries.length,
-    removed: apply ? doomed.length : 0,
+    removed: actuallyRemoved,
     kept: survivors.length
   };
 }
