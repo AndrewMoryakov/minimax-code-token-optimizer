@@ -1104,6 +1104,35 @@ if (!fs.existsSync(target)) {
   fail(`target file not found: ${target}`);
 }
 
+// Refuse to write if another process holds the bundle. On Windows the
+// loaded MiniMax process keeps the @mavis/opencode-plugin index.js open
+// while it runs; writing over a locked file either fails or, worse,
+// produces a partially-flushed file that the running daemon keeps
+// serving. The user-visible error here is "close MiniMax Code and run
+// the patcher again" rather than a silent half-written bundle.
+function ensureBundleWritable(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, "r+");
+  } catch (err) {
+    if (err.code === "EBUSY" || err.code === "EACCES" || err.code === "EPERM" || err.code === "ETXTBSY") {
+      fail([
+        `bundle is locked by another process: ${filePath}`,
+        `  close MiniMax Code (or the OpenCode worker) and run the patcher again.`,
+        `  underlying error: ${err.code} ${err.message}`
+      ].join("\n"));
+    }
+    throw err;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
+  }
+}
+if (!dryRun) {
+  ensureBundleWritable(target);
+}
+
 const before = fs.readFileSync(target, "utf8");
 const beforeHash = sha256(before);
 const result = applyStages(before);
