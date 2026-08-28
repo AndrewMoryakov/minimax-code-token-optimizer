@@ -60,42 +60,68 @@ the targeted area is actually large.
 
 Small effort, clear target. Try these first.
 
-### H1. Bring MCP `cu` (Computer Use) back online
+### H1. Decide on `cu` (Computer Use): accept retired, or build a stdio wrapper
 
-- **What:** `cu` is the MCP that lets the agent drive the local
-  desktop (mouse, keyboard, screen, windows, clipboard). The
-  `127.0.0.1:15321` endpoint it depends on is not listening. Until
-  this is fixed, the `desktop_*` tool family is unreachable.
-- **Why it helps:** the user's note in `cu`'s own description says
-  "Use desktop_screenshot to see the screen, then
-  desktop_left_click / desktop_type / etc." — a class of
-  tasks (form-filling, browser scripting, IDE automation) is
-  blocked until this works.
-- **Effort:** 1-2 hours. Likely causes (in order): (a) the
-  Mavis daemon's MCP HTTP server is bound to a different port
-  (check `~/.minimax/v2/observability/logs/runtime-*.log` for
-  a startup line that prints the port); (b) the daemon is not
-  started with the right flag to expose the MCP HTTP surface;
-  (c) a firewall rule is blocking the loopback bind.
-- **Risk:** low. Worst case, no behavior change.
-- **Blocker note:** this is also the prerequisite for **H2**
-  (trash via MCP), since `trash` is served from the same port.
+- **Context:** see `V2_ARCHITECTURE_2026-08-28.md`. The
+  `cu` MCP is **officially retired** in v2
+  (`@mavis/local-runtime/src/mcp/retired-cu.ts`, 911 bytes,
+  filter function exported). The HTTP `127.0.0.1:15321/mavis/mcp/cu`
+  endpoint is detected at config-load time and dropped. The `cu`
+  source code itself is still present at
+  `@mavis/local-runtime/src/cu/` (`cu-tool-defs.ts`,
+  `cu-runtime-tools.ts`, `cu-screenshot-pruner.ts`, `gate.ts`),
+  but it is not wrapped in an MCP server.
+- **Two options:**
+  - **Accept retired.** Document that desktop Computer Use is
+    unavailable in v2. No code work. (Current state.)
+  - **Build `cu-mcp-stdio.js`.** A small new file in
+    `@mavis/agent-tools/dist/desktop/`, parallel to
+    `matrix-mcp-stdio.js`, that imports the existing
+    `cu-tool-defs.ts` and exposes each tool via MCP stdio.
+    Add a `buildBuiltinCuServerConfig` in
+    `@mavis/local-runtime/src/mcp/builtin-cu.ts`, paralleling
+    `builtin-matrix.ts`. Update `retired-cu.ts` to no longer
+    retire the new stdio path. Effort: 200-300 lines + smoke
+    test, ~half a day.
+- **Why it helps:** unblocks desktop automation tasks (form-fill,
+  browser scripting, IDE control). The user's own description of
+  the `cu` MCP lists this exact use case.
+- **Effort:** half a day if you take the "build" option. Zero if
+  you take the "accept" option. This is a strategic choice.
+- **Risk:** low either way. The "build" option only adds a new
+  path; the existing retired-cu filter is documented to drop
+  the loopback HTTP pattern, so it would still skip the
+  legacy URL.
+- **Scope note:** this work belongs in the upstream Mavis repo,
+  not in this `minimax-code-token-optimizer` repo. The
+  token-optimizer repo does not own the v2 source.
 
-### H2. Fix `trash` MCP and remove the `mavis-trash` CLI workaround
+### H2. Document `mavis-trash.cmd` as the official `trash` path; remove `trash` MCP from `mcp.json`
 
-- **What:** the `trash` MCP is unreachable on 15321, but the
-  `mavis-trash.cmd` CLI works as a fallback. This is fine for
-  now, but the CLI bypasses the MCP permission model, which
-  means the desktop safety gate does not see those calls
-  (see `~/.minimax/agents/mavis/memory/MEMORY.md` "Desktop
-  safety gate: обход для legitimate cleanup"). When 15321 comes
-  back, switch the documented workflow to the MCP path so the
-  permission gate applies.
-- **Why it helps:** closes the permission gap; aligns the
-  description in `mcp.json` with what actually runs.
-- **Effort:** 30 minutes, after H1 is done.
-- **Risk:** low. The CLI path is already exercised in many
-  cleanup tasks; the MCP path is just a different transport.
+- **Context:** the `trash` MCP is **permanently retired** in v2
+  for the same reason `cu` is: the loopback HTTP URL
+  `127.0.0.1:15321/mavis/mcp/trash` matches
+  `isRetiredLoopbackCuEndpoint`'s sibling filter, and v2 has no
+  HTTP MCP surface to host it on. The `trash` MCP's own
+  description already says: *"In shell commands, use
+  `mavis-trash <path1> <path2> ...` directly — no need to go
+  through `mavis mcp call`."* The `mavis-trash.cmd` CLI
+  (re-uses `MiniMax Code.exe` as Node via `ELECTRON_RUN_AS_NODE=1`)
+  is the intended working path.
+- **What:** the `trash` entry in `~/.minimax/mcp/mcp.json` is
+  dead config and confuses anyone reading the file. Remove it.
+  Optionally, add a `disabled: true` note in a comment or in
+  this backlog so the next reader knows it was deliberate.
+- **Why it helps:** removes a misleading entry. The CLI is
+  already what the MCP description recommends. The "workaround"
+  framing in this backlog was wrong — the CLI is the official
+  path, not a workaround.
+- **Effort:** 5 minutes (edit mcp.json). Then restart the
+  Electron process so the config is re-read; on this Mavis
+  install a full MiniMax Code restart is the only safe way.
+- **Risk:** none functional. The only effect of removing the
+  entry is that future audits of `mcp.json` won't be confused
+  by it.
 
 ### H3. Wire `model` and `cost_usd` into the token-usage table
 
