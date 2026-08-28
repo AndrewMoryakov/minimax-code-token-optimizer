@@ -1,9 +1,16 @@
-# Plugin Audit — 2026-08-28
+# Plugin Audit — 2026-08-28 (v1-only snapshot)
 
-## Scope
+> **Status: superseded by `MCP_AUDIT_V2_2026-08-28.md` (same PR).**
+> This document is preserved as a record of v1 telemetry. The plugin
+> directory it audits (`~/.minimax/agents/mavis/opencode/plugins/`) is
+> not used by the v2 runtime (see v2 audit for the MCP-based
+> architecture). The 6-of-7 finding is correct for the v1 plugin
+> directory but is moot for the v2 install the patcher would target.
 
-Runtime audit of which opencode plugins are actually loaded by the current
-Mavis install (`Mavis 3.0.67.128`). Direct evidence: telemetry produced by
+## Scope (v1)
+
+Runtime audit of which opencode plugins are actually loaded by the v1
+runtime on `Mavis 3.0.67.128`. Direct evidence: telemetry produced by
 plugins during a 19-minute real workload.
 
 Not a code review. Not a benchmark. Just: which `.js` files in
