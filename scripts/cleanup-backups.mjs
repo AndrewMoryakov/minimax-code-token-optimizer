@@ -53,14 +53,24 @@ Options:
   --keep <N>        Keep the N most recent files per directory. Default: 5
   --apply            Actually delete. Default is dry-run.
   --all-dirs         Also clean the per-file "backups" dirs (config, policy,
-                    plugins) created by install.mjs. Default: only the
-                    patcher backup dir.
+                    plugins, skills/bridge, sqlite) created by install.mjs.
+                    Auto-detects both v1 and v2 paths. Default: only the
+                    patcher backup dir (also auto-detected).
   --target <path>    Override the patcher bundle path (uses the same default
                     as apply-mavis-opencode-optimizations.mjs otherwise)
   --help, -h         Show this help
 
 Notes:
   Without --apply the script only reports what it would delete.
+
+  v1 vs v2 paths: the v1 patcher path is under
+    <LocalAppData>\\Programs\\MiniMax Code\\resources\\resources\\daemon\\...
+    (duplicated 'resources' segment is v1-only). On v2 (Mavis 3.0.67.128+),
+    that path does not exist; the equivalent backup dir is
+    <home>/.mavis/agents/mavis/workspace/bundle-patches/mavis-opencode-plugin/backups.
+    v2 also creates new backup dirs (skills/bridge, v2/sqlite) that
+    the v1 script did not know about. This script auto-detects whichever
+    exist on the running install.
 `);
 }
 
@@ -96,16 +106,49 @@ const patcherBackupDir = path.join(path.dirname(bundle), "mavis-token-optimizer-
 
 const home = os.homedir();
 const mavisRoot = path.join(home, ".mavis", "agents", "mavis");
-const perFileBackupDirs = [
+const mavisTop = path.join(home, ".mavis");
+
+// v1 backup paths (still present on most installs as stale data).
+// Discovered by running this script on Mavis 3.0.67.128 (v2) — these
+// were left behind from an earlier v1 install and are still valid
+// targets for cleanup.
+const v1PerFileBackupDirs = [
   path.join(mavisRoot, "opencode", "plugins", "backups"),
   path.join(mavisRoot, "opencode", "backups"),
-  path.join(mavisRoot, "context-budget", "config", "backups")
+  path.join(mavisRoot, "context-budget", "config", "backups"),
 ];
 
+// v2 backup paths discovered during the 2026-08-28 audit:
+// - skills/bridge/backups: pre/post install snapshots of the bridge SKILL.md
+// - workspace/bundle-patches/.../backups: pre-reapply snapshots of the
+//   patched bundle index.js (1.2 MB each)
+// - v2/sqlite/backups: pre-v2-migration runtime-state.sqlite (9.3 MB)
+const v2PerFileBackupDirs = [
+  path.join(mavisRoot, "skills", "bridge", "backups"),
+  path.join(mavisRoot, "workspace", "bundle-patches", "mavis-opencode-plugin", "backups"),
+  path.join(mavisTop, "v2", "sqlite", "backups"),
+];
+
+// v2 patcher backup path (the v1 path does not exist on v2).
+// If found, auto-included in the default scan.
+const v2PatcherBackup = path.join(
+  mavisRoot,
+  "workspace",
+  "bundle-patches",
+  "mavis-opencode-plugin",
+  "backups"
+);
+
 const dirsToClean = [patcherBackupDir];
-if (allDirs) {
-  for (const dir of perFileBackupDirs) dirsToClean.push(dir);
+if (fs.existsSync(v2PatcherBackup) && !dirsToClean.includes(v2PatcherBackup)) {
+  dirsToClean.push(v2PatcherBackup);
 }
+if (allDirs) {
+  for (const dir of v1PerFileBackupDirs) dirsToClean.push(dir);
+  for (const dir of v2PerFileBackupDirs) dirsToClean.push(dir);
+}
+// Dedupe (v2PatcherBackup may be in v2PerFileBackupDirs).
+const uniqueDirsToClean = [...new Set(dirsToClean)];
 
 function cleanDir(dir, keep) {
   if (!fs.existsSync(dir)) {
@@ -153,7 +196,7 @@ console.log("");
 let totalScanned = 0;
 let totalRemoved = 0;
 let totalKept = 0;
-for (const dir of dirsToClean) {
+for (const dir of uniqueDirsToClean) {
   console.log(`dir=${dir}`);
   const result = cleanDir(dir, keep);
   totalScanned += result.scanned;
