@@ -27,20 +27,59 @@ Already in place on this Mavis install (3.0.67.128):
 
 These are small effort, clear target. Try these first.
 
+### H0. Identify the plugin-loading mechanism
+
+Audit on 2026-08-28 (see `docs/PLUGIN_AUDIT_2026-08-28.md`) found that
+6 of 7 non-stub plugin files in `~/.minimax/agents/mavis/opencode/plugins/`
+emit zero telemetry during a 19-minute real session. Only
+`request-guard.js` is active. The 116 KB of code in
+`context-budget.js`, `context-tools.js`, `openrouter-lifecycle.js`,
+`prompt-cache.js`, `prompt-surface.js`, `tool-discipline.js` does
+nothing at runtime.
+
+`opencode.json` declares `"plugin": ["mavis"]` only, and the
+auto-generated `plugins/mavis.js` is a 211-byte stub re-exporting from
+`…\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js`
+— a path that does not exist (duplicated `resources` segment). The
+bundle patcher targets the same malformed path and is therefore a
+no-op on `Mavis 3.0.67.128`.
+
+Without understanding who loads the plugins, none of H1, H2, M1, M2,
+L1 can be empirically validated. This is the highest-priority item
+in the backlog.
+
+- **What:** determine the actual loader path. Candidates: opencode's
+  own `node_modules`-walking loader, a hardcoded list inside
+  `app.asar`, an external supervisor. Output: a one-page diagnosis
+  with a workaround (e.g. registering the dead plugins by name, or
+  moving files to a different directory) or a definitive "impossible
+  without upstream fix" finding.
+- **Why it helps:** without this, every "save tokens" claim in this
+  backlog is theoretical.
+- **Effort:** 1-2 hours including `app.asar` extraction. If asar
+  extraction is blocked by EULA or tooling, fall back to reading
+  opencode's published source on GitHub for its plugin loader.
+- **Risk:** low. Output is a written diagnosis, no production
+  changes.
+
 ### H1. Audit loaded plugins vs actually-used plugins
 
-- **What:** the opencode.json plugin list currently has
-  `mavis, openrouter-lifecycle, prompt-surface, request-guard,
-  prompt-cache` (5). Each adds its description to the per-request
-  system prompt. Confirm each is doing work, drop the ones that
-  aren't.
-- **Why it helps:** a few hundred bytes per plugin, per request, on
-  every turn. Across a session this is the cheapest win available.
-- **Effort:** 5 minutes of inspection, plus disabling and re-running
-  a session to compare.
-- **Risk:** disabling a plugin that's silently doing useful work
-  (e.g. request-guard catching an oversized request). Disable one at
-  a time, observe.
+- **What:** the original audit (now superseded by the
+  2026-08-28 finding documented in `PLUGIN_AUDIT_2026-08-28.md` and
+  item H0 above) assumed 5 plugins were loaded. The actual state is
+  1 of 7 (`request-guard.js`) plus the dead `mavis` stub. The
+  `opencode.json` `plugin` field has only `["mavis"]`. Once H0
+  identifies the loader, decide for each dead file: re-enable, or
+  remove from the directory.
+- **Why it helps:** a few hundred bytes per dead-plugin reference
+  per turn, plus the misleading signal of having unused config
+  (`policy.json`) and unused code.
+- **Effort:** once H0 lands, this is 5 minutes of inspection plus
+  archive-or-delete.
+- **Risk:** if the dead plugins are silently doing useful work
+  through a non-obvious path (e.g. exporting a type consumed by
+  `app.asar`), removing them will break something. Disable one at a
+  time, observe.
 
 ### H2. Cap output tokens
 
@@ -153,11 +192,17 @@ These were considered and rejected for the reasons given.
 
 ## How to Apply
 
-The right order is: H1 → H2 → measure → M1/M2/L1 → L2.
+The right order is: **H0 → H1 → H2 → measure → M1/M2/L1 → L2**.
 
-H1 and H2 are minutes. The rest need measurements first; "save
-tokens" without knowing where tokens are spent is superstition.
+H0 is a prerequisite: until the plugin loader is understood, no
+downstream item can be empirically validated. H1 and H2 are minutes
+once H0 lands. The rest need measurements first; "save tokens"
+without knowing where tokens are spent is superstition.
+
 The `mavis usage session <id> --json` command (mentioned in the
-README) is the way to get the numbers; expect it to report
-`sectionBytes` and `largestTools` per request, which is enough to
-prioritise.
+README) is the way to get the numbers on a working Mavis install.
+On `Mavis 3.0.67.128` the `mavis` CLI is currently broken
+(`Cannot find module '…\resources\resources\daemon\cli.js'`,
+same malformed path as `plugins/mavis.js`), so the measurement
+step needs a workaround: provider-side logs, or fixing the
+daemon path, before this order is fully executable.
