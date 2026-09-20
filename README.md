@@ -103,7 +103,10 @@ mavis --version
 - Routes non-main lifecycle roles to configurable OpenRouter models.
 - Caps direct M3 `max_tokens` to reduce runaway output cost.
 - Shrinks static prompt, memory/profile, skill, MCP, and tool-description
-  payloads in the `max` profile.
+  payloads in the `max` profile. Enumerations inside a tool description, such
+  as the list of agents the `task` tool accepts, are carried over into the
+  shortened description, up to 1200 characters: they are the only place the
+  model learns which values are valid.
 - Adds request diagnostics for `sectionBytes` and `largestTools`.
 - Applies MiniMax prompt-cache markers in enforce mode, while treating cache
   savings as unproven until provider usage reports non-zero cache writes/reads.

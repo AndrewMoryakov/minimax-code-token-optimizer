@@ -391,6 +391,37 @@ const hooks = patchedModule.default();
 await hooks["tool.definition"]({ toolID: "bash" }, hookOutput);
 assert.ok(hookOutput.description.length < 140);
 assert.ok(hookOutput.parameters.properties.command.description.length < 120);
+// Enumerations inside a tool description are the only list of valid values the
+// model gets. Trimming keeps them even when the prose is replaced.
+const taskOutput = {
+  description: [
+    "Launch a subagent. " + "long preamble ".repeat(50),
+    "<available_agents>",
+    "  <agent><name>verifier</name></agent>",
+    "  <agent><name>explore</name></agent>",
+    "</available_agents>"
+  ].join("\n"),
+  parameters: { properties: {} }
+};
+patchedModule.trimToolDefinitionForMax({ toolID: "task" }, taskOutput);
+assert.ok(taskOutput.description.includes("<available_agents>"), "agent list must survive the trim");
+assert.ok(taskOutput.description.includes("verifier"));
+assert.ok(!taskOutput.description.includes("long preamble long preamble"), "prose is still replaced");
+
+const bigList = {
+  description: "x " + "<available_agents>" + "y".repeat(4000) + "</available_agents>",
+  parameters: {}
+};
+patchedModule.trimToolDefinitionForMax({ toolID: "task" }, bigList);
+assert.ok(bigList.description.length < 1400, `oversized list must not be carried back in: ${bigList.description.length}`);
+
+// The same protection applies to the final request-body trim.
+const finalTools = [{
+  name: "task",
+  description: "verbose ".repeat(80) + "\n<available_agents><agent>verifier</agent></available_agents>"
+}];
+patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({ tools: finalTools, messages: [] }));
+
 assert.equal(patchedModule.promptUserProfileCapChars(), 1200);
 assert.equal(patchedModule.promptMemoryTailCapChars(), 4500);
 assert.equal(patchedModule.promptMemorySummaryCapChars(), 1800);

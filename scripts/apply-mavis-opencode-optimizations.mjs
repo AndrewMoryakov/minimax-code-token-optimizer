@@ -708,7 +708,23 @@ function applyBundleRequestGuard(source, analysis) {
 }
 
 function toolDefinitionTrimHelpers() {
-  return `function trimSchemaDescriptionsForMax(value, maxLen = 80) {
+  return `function preserveToolEnumerations(original, replacement, maxKeptChars = 1200) {
+  if (typeof original !== "string" || !original) return replacement;
+  // A short replacement description is fine, but the enumerations inside a tool
+  // description are the only place the model learns which agents or skills it
+  // may name. Dropping them leaves it inventing values the tool then rejects.
+  const blocks = original.match(/<([a-zA-Z_][\\w-]*)>[\\s\\S]*?<\\/\\1>/g) || [];
+  const kept = [];
+  let used = 0;
+  for (const block of blocks) {
+    if (!/available|agent|skill|subagent|mode|type/i.test(block)) continue;
+    if (used + block.length > maxKeptChars) continue;
+    kept.push(block);
+    used += block.length;
+  }
+  return kept.length > 0 ? replacement + "\\n" + kept.join("\\n") : replacement;
+}
+function trimSchemaDescriptionsForMax(value, maxLen = 80) {
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     for (const item of value) trimSchemaDescriptionsForMax(item, maxLen);
@@ -725,19 +741,21 @@ function toolDefinitionTrimHelpers() {
 }
 function trimToolDefinitionForMax(input, output) {
   if (promptSurfaceLimits().profile !== "max") return;
+  // Captured before compaction: the enumerations live past the 180 char cut.
+  const originalDescription = typeof output.description === "string" ? output.description : "";
   if (typeof output.description === "string") {
     output.description = compactDescription(output.description, 180);
   }
   if (input.toolID === "bash") {
     output.description = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
   } else if (input.toolID === "skill") {
-    output.description = SKILL_TOOL_DESCRIPTION;
+    output.description = preserveToolEnumerations(originalDescription, SKILL_TOOL_DESCRIPTION);
   } else if (input.toolID === "todowrite") {
     output.description = "Create or update the concise task checklist for this session.";
   } else if (input.toolID === "ask_user") {
     output.description = "Ask the user only when required to continue safely.";
   } else if (input.toolID === "task") {
-    output.description = "Delegate a bounded task to another agent when it materially helps.";
+    output.description = preserveToolEnumerations(originalDescription, "Delegate a bounded task to another agent when it materially helps.");
   }
   trimSchemaDescriptionsForMax(output.parameters, 72);
 }
@@ -1001,11 +1019,11 @@ function applyFinalToolDescriptionTrim(source, analysis) {
     const before = tool2.description;
     let after;
     if (tool2.name === "skill") {
-      after = SKILL_TOOL_DESCRIPTION;
+      after = preserveToolEnumerations(before, SKILL_TOOL_DESCRIPTION);
     } else if (tool2.name === "bash") {
       after = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
     } else if (tool2.name === "task") {
-      after = "Delegate a bounded task to another agent when it materially helps.";
+      after = preserveToolEnumerations(before, "Delegate a bounded task to another agent when it materially helps.");
     } else {
       after = compactDescription(before, 220);
     }
