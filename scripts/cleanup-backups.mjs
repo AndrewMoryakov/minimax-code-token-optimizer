@@ -15,6 +15,9 @@
 //                                                       # per-file `backups/`
 //                                                       # dirs created by install.mjs
 //
+// Only directories this toolkit writes are ever trimmed. MiniMax's own backup
+// directories are listed as `not_ours` and left alone.
+//
 // The --keep value is per directory. The patcher backup dir keeps N
 // most-recent bundle snapshots. The per-file `backups/` dirs each
 // keep N most-recent copies of their file type.
@@ -53,9 +56,10 @@ Options:
   --keep <N>        Keep the N most recent files per directory. Default: 5
   --apply            Actually delete. Default is dry-run.
   --all-dirs         Also clean the per-file "backups" dirs (config, policy,
-                    plugins, skills/bridge, sqlite) created by install.mjs.
-                    Auto-detects both v1 and v2 paths. Default: only the
-                    patcher backup dir (also auto-detected).
+                    plugins) created by install.mjs. Auto-detects both v1 and
+                    v2 paths. Default: only the patcher backup dir (also
+                    auto-detected). Backup directories owned by MiniMax itself
+                    are never touched and are reported as not_ours.
   --target <path>    Override the patcher bundle path (uses the same default
                     as apply-mavis-opencode-optimizations.mjs otherwise)
   --help, -h         Show this help
@@ -118,15 +122,23 @@ const v1PerFileBackupDirs = [
   path.join(mavisRoot, "context-budget", "config", "backups"),
 ];
 
-// v2 backup paths discovered during the 2026-08-28 audit:
-// - skills/bridge/backups: pre/post install snapshots of the bridge SKILL.md
-// - workspace/bundle-patches/.../backups: pre-reapply snapshots of the
-//   patched bundle index.js (1.2 MB each)
-// - v2/sqlite/backups: pre-v2-migration runtime-state.sqlite (9.3 MB)
+// v2 backup paths discovered during the 2026-08-28 audit. Only directories this
+// toolkit writes to are cleaned. Two more were listed here before and are not
+// touched any more:
+// - v2/sqlite/backups holds MiniMax's own pre-migration runtime-state.sqlite,
+//   written by the app, not by us, and each snapshot is a .sqlite plus its -shm
+//   and -wal sidecars. Trimming by mtime split those triples and deleted the
+//   only rollback point the app had.
+// - skills/bridge/backups belongs to the bridge project.
 const v2PerFileBackupDirs = [
-  path.join(mavisRoot, "skills", "bridge", "backups"),
   path.join(mavisRoot, "workspace", "bundle-patches", "mavis-opencode-plugin", "backups"),
-  path.join(mavisTop, "v2", "sqlite", "backups"),
+];
+
+// Directories that look like backups but are not ours to trim. Named so the
+// script can say why it is leaving them alone.
+const foreignBackupDirs = [
+  { path: path.join(mavisTop, "v2", "sqlite", "backups"), owner: "MiniMax pre-migration database snapshots" },
+  { path: path.join(mavisRoot, "skills", "bridge", "backups"), owner: "mavis-minimax-bridge skill snapshots" },
 ];
 
 // v2 patcher backup path (the v1 path does not exist on v2).
@@ -191,6 +203,13 @@ function cleanDir(dir, keep) {
 console.log(`mode=${apply ? "apply" : "dry-run"}`);
 console.log(`keep=${keep}`);
 console.log(`all_dirs=${allDirs}`);
+console.log("");
+
+for (const foreign of foreignBackupDirs) {
+  if (fs.existsSync(foreign.path)) {
+    console.log(`not_ours=${foreign.path} (${foreign.owner})`);
+  }
+}
 console.log("");
 
 let totalScanned = 0;
