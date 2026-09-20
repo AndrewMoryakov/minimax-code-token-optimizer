@@ -44,10 +44,18 @@ if (Test-Path -LiteralPath $opencodeConfig) {
     Write-Output "backup=$backup"
   }
 
-  $json = Get-Content -LiteralPath $opencodeConfig -Raw | ConvertFrom-Json
+  # A UTF-8 BOM here breaks every JSON.parse reader, including this repo's own
+  # scripts, so read past it and write the file back without one.
+  $raw = [IO.File]::ReadAllText($opencodeConfig)
+  $raw = $raw -replace "^\uFEFF", ""
+  try {
+    $json = $raw | ConvertFrom-Json
+  } catch {
+    throw "opencode config does not parse: $opencodeConfig`n$($_.Exception.Message)"
+  }
   $managed = @("openrouter-lifecycle", "prompt-surface", "request-guard", "prompt-cache")
   $existing = @()
-  if ($json.plugin) {
+  if ($json.PSObject.Properties.Name -contains "plugin" -and $json.plugin) {
     $existing = @($json.plugin | Where-Object { $managed -notcontains $_ })
   }
   if ($existing -notcontains "mavis") {
@@ -60,8 +68,15 @@ if (Test-Path -LiteralPath $opencodeConfig) {
       foreach ($pluginName in $managed) { [void]$result.Add($pluginName) }
     }
   }
-  $json.plugin = @($result)
-  $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $opencodeConfig -Encoding UTF8
+  # Assigning to a property the object does not have throws on Windows
+  # PowerShell 5.1, so add it when the config had no plugin list at all.
+  if ($json.PSObject.Properties.Name -contains "plugin") {
+    $json.plugin = @($result)
+  } else {
+    $json | Add-Member -MemberType NoteProperty -Name plugin -Value @($result)
+  }
+  $text = ($json | ConvertTo-Json -Depth 20)
+  [IO.File]::WriteAllText($opencodeConfig, $text + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
   Write-Output "registered_plugins=$opencodeConfig"
   Write-Output "plugin_order=$($result -join ',')"
 } else {

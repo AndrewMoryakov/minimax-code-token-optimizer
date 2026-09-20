@@ -20,8 +20,9 @@
     "test:patcher": "node ./scripts/test-patcher.mjs",
     "check:repo": "node ./scripts/check-repo.mjs",
     "test:layout": "node ./scripts/test-install-layout.mjs",
-    "test": "node ./scripts/test-patcher.mjs && node ./scripts/test-install-layout.mjs && node ./scripts/test-plugins.mjs",
-    "test:plugins": "node ./scripts/test-plugins.mjs"
+    "test": "node ./scripts/test-patcher.mjs && node ./scripts/test-install-layout.mjs && node ./scripts/test-plugins.mjs && node ./scripts/test-config-io.mjs",
+    "test:plugins": "node ./scripts/test-plugins.mjs",
+    "test:config": "node ./scripts/test-config-io.mjs"
   },
   "keywords": [
     "minimax",

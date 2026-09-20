@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { parseJsonFile, readJsonText } from "./lib/json-file.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = new Map();
@@ -171,7 +172,7 @@ function registerPlugins() {
     ...base.slice(insertAt),
   ];
   const next = { ...current, plugin: nextPlugins };
-  const before = fs.readFileSync(configPath, "utf8");
+  const before = readJsonText(configPath);
   const after = stableStringify(next);
   if (before === after) {
     console.log(`plugins_registered_unchanged=${configPath}`);
@@ -185,8 +186,7 @@ function registerPlugins() {
 }
 
 function readJson(filePath) {
-  const text = fs.readFileSync(filePath, "utf8");
-  return JSON.parse(text);
+  return parseJsonFile(filePath);
 }
 
 function stableStringify(value) {
@@ -226,7 +226,7 @@ function mergePolicy() {
       }
     }
   };
-  const before = fs.existsSync(policyPath) ? fs.readFileSync(policyPath, "utf8") : null;
+  const before = fs.existsSync(policyPath) ? readJsonText(policyPath) : null;
   const after = stableStringify(next);
   if (before === after) {
     console.log(`policy_unchanged=${policyPath}`);

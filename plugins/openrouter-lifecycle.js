@@ -63,7 +63,8 @@ const MODELS = Object.freeze({
 
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    // MiniMax Desktop and Windows PowerShell can leave a UTF-8 BOM here.
+    return JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
   } catch (_) {
     return null;
   }

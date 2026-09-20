@@ -43,7 +43,7 @@ function log(event, payload = {}) {
 
 function readPolicyProfile() {
   try {
-    const policy = JSON.parse(fs.readFileSync(POLICY_FILE, "utf8"));
+    const policy = JSON.parse(fs.readFileSync(POLICY_FILE, "utf8").replace(/^\uFEFF/, ""));
     return typeof policy.profile === "string" ? policy.profile : null;
   } catch (_) {
     return null;

@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
 import { defaultBundlePath, detectInstallLayout } from "./lib/install-layout.mjs";
+import { stripBom } from "./lib/json-file.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -71,7 +72,7 @@ function exists(filePath) {
 
 function readText(filePath) {
   try {
-    return fs.readFileSync(filePath, "utf8");
+    return stripBom(fs.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
