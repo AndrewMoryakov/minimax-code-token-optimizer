@@ -3,6 +3,21 @@
 This project is Windows-first and patches a local MiniMax Code Desktop install.
 It does not redistribute MiniMax vendor bundles.
 
+## Supported MiniMax Generations
+
+| Generation | Shape | Status |
+|---|---|---|
+| v1 | `…\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js` exists | patchable |
+| v2 | `app.asar` carries `@mavis/local-runtime`, no opencode-plugin bundle | **out of scope, installer refuses** |
+
+`detectInstallLayout` in `scripts/lib/install-layout.mjs` reads only the asar
+header (a few MB of a ~480 MB archive) and reports the generation as
+`install_layout=` in `diagnose-install.mjs`. Verified on Mavis 3.0.68.134:
+`install_layout=v2-local-runtime`, detection took ~0.7 s.
+
+On v2 the standalone plugins, `policy.json` and every `MAVIS_*` environment
+variable are inert: no packed file in `app.asar` references them.
+
 ## Supported Shape
 
 The patcher expects recognizable MiniMax/Mavis OpenCode bundle anchors:

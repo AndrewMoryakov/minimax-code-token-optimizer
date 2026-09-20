@@ -2,6 +2,17 @@
 
 Use this when installing the patch on another Windows machine with MiniMax Code.
 
+## Stop Before You Start
+
+Run the diagnostic first and read `install_layout`:
+
+- `install_layout=v1-opencode-plugin` — continue with the steps below.
+- `install_layout=v2-local-runtime` — **stop and tell the user.** This MiniMax
+  version has no patchable bundle; the plugins, `policy.json` and the `MAVIS_*`
+  environment variables do nothing on it. Do not look for another file to patch,
+  and do not pass `--target` at anything else.
+- `install_layout=not-installed` / `unknown` — stop and report.
+
 ## Steps
 
 1. Clone the repo.
@@ -91,6 +102,8 @@ Keep this invariant:
 
 ## Stop Conditions
 
+- If `diagnose-install.mjs` reports `install_layout=v2-local-runtime`, stop.
+  Nothing in this repository affects that install.
 - If `apply-mavis-opencode-optimizations.mjs` says anchors are missing, stop.
   The local MiniMax Code bundle is not compatible with this patcher.
 - Do not paste or commit API keys.

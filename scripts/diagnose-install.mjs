@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { analyzeBundleFile } from "./lib/bundle-analysis.mjs";
+import { defaultBundlePath, detectInstallLayout } from "./lib/install-layout.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -49,19 +50,7 @@ if (args.has("help")) {
 
 const jsonMode = args.has("json");
 const home = os.homedir();
-const localAppData = process.env.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
-const defaultBundle = path.join(
-  localAppData,
-  "Programs",
-  "MiniMax Code",
-  "resources",
-  "resources",
-  "daemon",
-  "node_modules",
-  "@mavis",
-  "opencode-plugin",
-  "index.js"
-);
+const defaultBundle = defaultBundlePath();
 const bundlePath = path.resolve(args.get("target") ?? defaultBundle);
 const mavisRoot = path.resolve(args.get("mavis-root") ?? path.join(home, ".mavis", "agents", "mavis"));
 const policyPath = path.join(mavisRoot, "context-budget", "config", "policy.json");
@@ -206,7 +195,10 @@ function inspectOpenRouterKey() {
 
 function summarize(report) {
   const issues = [];
-  if (!report.bundle.exists) issues.push("MiniMax bundled opencode plugin was not found.");
+  if (!report.bundle.exists) {
+    issues.push("MiniMax bundled opencode plugin was not found.");
+    if (report.installLayout.message) issues.push(report.installLayout.message);
+  }
   if (report.bundle.exists && !report.bundle.compatible) {
     issues.push(`Bundle missing patch anchors: ${report.bundle.missingRequiredAnchors.join(", ")}.`);
   }
@@ -227,7 +219,11 @@ function summarize(report) {
   }
 
   let nextAction = "No action needed.";
-  if (!report.bundle.exists || !report.bundle.compatible) {
+  if (report.installLayout.layout === "v2-local-runtime") {
+    nextAction = "Stop. This MiniMax version has no patchable bundle; nothing in this toolkit applies to it.";
+  } else if (report.installLayout.layout === "not-installed") {
+    nextAction = "Stop. No MiniMax Code installation was found.";
+  } else if (!report.bundle.exists || !report.bundle.compatible) {
     nextAction = "Stop and run a compatibility pass for this MiniMax Code version.";
   } else if (!report.bundle.patched) {
     nextAction = "Run: node .\\scripts\\apply-mavis-opencode-optimizations.mjs";
@@ -258,6 +254,7 @@ const report = {
     gh: commandVersion("gh"),
     mavis: commandVersion("mavis", ["--version"])
   },
+  installLayout: detectInstallLayout({ bundlePath: bundlePath }),
   bundle: inspectBundle(),
   mavisRoot,
   policy: inspectPolicy(),
@@ -272,6 +269,9 @@ if (jsonMode) {
 } else {
   console.log("MiniMax Code Token Optimizer diagnostic");
   console.log(`timestamp=${report.timestamp}`);
+  console.log(`install_layout=${report.installLayout.layout}`);
+  console.log(`install_supported=${report.installLayout.supported}`);
+  for (const line of report.installLayout.evidence) console.log(`install_evidence=${line}`);
   console.log(`bundle=${report.bundle.path}`);
   console.log(`bundle_exists=${report.bundle.exists}`);
   if (report.bundle.exists) {

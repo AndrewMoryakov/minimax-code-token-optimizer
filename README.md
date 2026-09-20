@@ -4,7 +4,10 @@ Redistributable scripts, plugins, examples, and documentation for reducing
 MiniMax Code / Mavis token consumption.
 
 This repository is based on a local optimization pass that reduced tiny fresh
-direct-M3 request input from `26147` tokens to `7550` tokens in canary tests.
+direct-M3 request input from `26147` tokens to `7550` tokens in canary tests on
+a **v1** MiniMax Code install. Read "Supported MiniMax Versions" below before
+installing: current MiniMax Code (v2) has no patchable bundle, and the installer
+refuses to touch it.
 
 ## Who This Is For
 
@@ -23,6 +26,38 @@ explains the background, safety model, and manual commands.
 Windows-first, experimental, and actively compatibility-gated. The installer
 backs up files and aborts when expected MiniMax bundle anchors are missing. The
 repo does not ship MiniMax vendor bundles or API keys.
+
+## Supported MiniMax Versions
+
+**This toolkit only applies to v1-era MiniMax Code installs** — the ones that
+ship a patchable OpenCode plugin bundle at
+
+```text
+%LOCALAPPDATA%\Programs\MiniMax Code\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js
+```
+
+MiniMax Code v2 (verified on Mavis 3.0.68.134, and the same is true on 3.0.59)
+replaced that runtime with `@mavis/local-runtime` inside `app.asar`. On such an
+install:
+
+- the bundle above does not exist, so the patcher has nothing to patch;
+- `@mavis/local-runtime` keeps opencode only as migration code, and its own
+  source says new local sessions no longer use that path;
+- a search of every packed `.js`/`.ts` file in `app.asar` finds no reference to
+  `MAVIS_PROMPT_CACHE_MODE`, `MAVIS_CONTEXT_BUDGET`, `MAVIS_REQUEST_GUARD`,
+  `MAVIS_MINIMAX_MAX_TOKENS`, `opencode.json` or `context-budget/config`, so the
+  standalone plugins, the environment knobs and `policy.json` have no effect.
+
+The installer detects this and refuses:
+
+```text
+install_layout=v2-local-runtime
+ERROR: This MiniMax Code install runs the v2 local-runtime (pi-agent).
+```
+
+Do not work around that by passing `--target` at some other file. See
+`docs/MCP_AUDIT_V2_2026-08-28.md` and `docs/V2_ARCHITECTURE_2026-08-28.md` for
+the evidence.
 
 ## Prerequisites
 
@@ -70,7 +105,10 @@ mavis --version
 - Applies MiniMax prompt-cache markers in enforce mode, while treating cache
   savings as unproven until provider usage reports non-zero cache writes/reads.
 
-## Measured Canary Results
+## Measured Canary Results (v1 only)
+
+These numbers were measured on a v1 install with the bundle patch applied. They
+do not describe MiniMax Code v2, where the patch cannot be applied at all.
 
 | Stage | Input tokens | Body bytes | System bytes | Message bytes | Tool bytes |
 |---|---:|---:|---:|---:|---:|
@@ -394,6 +432,9 @@ proven saving is the smaller request context.
 If `diagnose-install.mjs` exits with code `2`, read the printed issue list and
 `next_action`. This usually means the patch is not installed yet or the local
 MiniMax bundle is not compatible with the current patcher.
+
+If it prints `install_layout=v2-local-runtime`, stop: that MiniMax version is
+out of scope for this toolkit, and no flag makes it work.
 
 If the patcher says anchors are missing, stop and do not force the patch. That
 MiniMax version needs a compatibility pass.

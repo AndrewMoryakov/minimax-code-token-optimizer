@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { analyzeBundleSource, sha256 } from "./lib/bundle-analysis.mjs";
+import { defaultBundlePath, detectInstallLayout } from "./lib/install-layout.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -46,18 +46,7 @@ if (args.has("help")) {
   process.exit(0);
 }
 
-const defaultTarget = path.join(
-  process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"),
-  "Programs",
-  "MiniMax Code",
-  "resources",
-  "resources",
-  "daemon",
-  "node_modules",
-  "@mavis",
-  "opencode-plugin",
-  "index.js"
-);
+const defaultTarget = defaultBundlePath();
 
 const target = path.resolve(args.get("target") ?? defaultTarget);
 const dryRun = args.has("dry-run");
@@ -1101,7 +1090,13 @@ function applyStages(source) {
 }
 
 if (!fs.existsSync(target)) {
-  fail(`target file not found: ${target}`);
+  const layout = detectInstallLayout({ bundlePath: target });
+  fail([
+    `target file not found: ${target}`,
+    `install_layout=${layout.layout}`,
+    ...layout.evidence.map((line) => `  ${line}`),
+    ...(layout.message ? [layout.message] : [])
+  ].join("\n"));
 }
 
 // Refuse to write if another process holds the bundle. On Windows the

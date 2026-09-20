@@ -272,11 +272,20 @@ console.log(`profile=${profile}`);
 if (dryRun) console.log("mode=dry-run");
 
 const initial = parseDiagnose();
+console.log(`install_layout=${initial.installLayout.layout}`);
+if (initial.installLayout.layout === "v2-local-runtime") {
+  fail([
+    initial.installLayout.message,
+    "",
+    "Nothing was written. See docs/COMPATIBILITY.md for which MiniMax versions this toolkit supports."
+  ].join("\n"));
+}
 if (!initial.bundle.exists && !skipBundle) {
   fail([
     "MiniMax bundled opencode plugin was not found.",
     ...(initial.summary?.issues ?? []),
-    "Install MiniMax Code or pass --target to the installed @mavis/opencode-plugin index.js."
+    ...initial.installLayout.evidence.map((line) => `  ${line}`),
+    "Install MiniMax Code, or pass --target only if you know that file is a v1 @mavis/opencode-plugin index.js."
   ].join("\n"));
 }
 if (initial.bundle.exists && !initial.bundle.compatible && !skipBundle) {
