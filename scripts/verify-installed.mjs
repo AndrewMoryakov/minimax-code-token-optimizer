@@ -57,6 +57,8 @@ const source = fs.readFileSync(target, "utf8");
 check(source.includes("function promptSurfaceLimits() {"), "profile-aware prompt limits present");
 check(source.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192"), "direct M3 output cap present");
 check(source.includes("process.env.MAVIS_MINIMAX_MAX_TOKENS"), "output cap env override present");
+check(source.includes("function minimaxMaxTokensCap(parsed) {"), "thinking-aware output cap present");
+check(source.includes("const maxTokenCap = minimaxMaxTokensCap(parsed);"), "output cap clamp uses thinking-aware cap");
 check(source.includes("function trimFinalToolDescriptionsForMax(tools) {"), "final tool description trim present");
 check(source.includes("toolDescriptionsTrimmed"), "tool trim diagnostics present");
 check(source.includes("patchMiniMaxPromptCacheBody,"), "request patcher exported for smoke tests");

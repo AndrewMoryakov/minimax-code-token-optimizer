@@ -153,8 +153,7 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   }
   let changed = false;
   if (typeof parsed.max_tokens === "number") details.maxTokensBefore = parsed.max_tokens;
-  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
-  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
+  const maxTokenCap = minimaxMaxTokensCap(parsed);
   if (typeof parsed.max_tokens === "number" && parsed.max_tokens > maxTokenCap) {
     parsed.max_tokens = maxTokenCap;
     details.maxTokensAfter = maxTokenCap;
@@ -200,6 +199,24 @@ function applyMiniMaxPromptCache(input, init) {
 `;
 }
 
+function maxTokensCapHelper() {
+  return `var MINIMAX_DEFAULT_MAX_TOKENS = 8192;
+var MINIMAX_THINKING_OUTPUT_MARGIN = 1024;
+function minimaxMaxTokensCap(parsed) {
+  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
+  const cap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
+  const thinking = parsed?.thinking;
+  const budget = thinking && typeof thinking === "object" && thinking.type !== "disabled" && typeof thinking.budget_tokens === "number"
+    ? thinking.budget_tokens
+    : 0;
+  if (budget <= 0) return cap;
+  // Providers reject max_tokens <= thinking.budget_tokens, and a cap that leaves
+  // no room after reasoning truncates tool calls mid-write. Never cap below it.
+  return Math.max(cap, budget + MINIMAX_THINKING_OUTPUT_MARGIN);
+}
+`;
+}
+
 function applyCompatibilityBootstrap(source) {
   let out = source;
   const changed = [];
@@ -217,14 +234,14 @@ function applyCompatibilityBootstrap(source) {
     skipped.push("compatibility bootstrap helpers already present");
   }
 
-  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+  if (!out.includes("function minimaxMaxTokensCap(parsed) {")) {
     out = replaceOnce(
       out,
       "function promptSurfaceLimits() {",
-      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction promptSurfaceLimits() {",
-      "insert compatibility max token constant"
+      `${maxTokensCapHelper()}function promptSurfaceLimits() {`,
+      "insert compatibility max token cap helper"
     );
-    changed.push("inserted direct M3 default max_tokens cap");
+    changed.push("inserted direct M3 thinking-aware max_tokens cap");
   }
 
   if (!out.includes("const promptCachePatch = applyMiniMaxPromptCache(input, init);")) {
@@ -267,14 +284,31 @@ function applyDirectM3OutputCap(source, analysis) {
     return { source: out, changed, skipped };
   }
 
-  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+  if (!out.includes("function minimaxMaxTokensCap(parsed) {")) {
     out = replaceOnce(
       out,
       "function isMiniMaxPromptCacheTarget(input, init) {",
-      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction isMiniMaxPromptCacheTarget(input, init) {",
-      "insert MINIMAX_DEFAULT_MAX_TOKENS"
+      `${maxTokensCapHelper()}function isMiniMaxPromptCacheTarget(input, init) {`,
+      "insert max_tokens cap helper"
     );
-    changed.push("inserted direct M3 default max_tokens cap");
+    changed.push("inserted direct M3 thinking-aware max_tokens cap");
+  }
+
+  // Bundles patched before the thinking guard existed carry the old two-line
+  // cap. Rewrite it in place instead of leaving a cap that can land below
+  // thinking.budget_tokens.
+  const legacyCapLines = [
+    '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
+    "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;"
+  ].join("\n");
+  if (out.includes(legacyCapLines)) {
+    out = replaceOnce(
+      out,
+      legacyCapLines,
+      "  const maxTokenCap = minimaxMaxTokensCap(parsed);",
+      "upgrade legacy max_tokens cap"
+    );
+    changed.push("upgraded existing max_tokens clamp to respect thinking budget");
   }
 
   if (!out.includes("maxTokensBefore: typeof parsed.max_tokens === \"number\" ? parsed.max_tokens : void 0")) {
@@ -289,13 +323,12 @@ function applyDirectM3OutputCap(source, analysis) {
     changed.push("added max_tokens diagnostics");
   }
 
-  if (!out.includes("process.env.MAVIS_MINIMAX_MAX_TOKENS")) {
+  if (!out.includes("const maxTokenCap = minimaxMaxTokensCap(parsed);")) {
     out = replaceOnce(
       out,
       "  const tools = annotatePromptCacheTools(parsed.tools);\n",
       [
-        '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
-        "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;",
+        "  const maxTokenCap = minimaxMaxTokensCap(parsed);",
         "  if (typeof parsed.max_tokens === \"number\" && parsed.max_tokens > maxTokenCap) {",
         "    parsed.max_tokens = maxTokenCap;",
         "    details.maxTokensAfter = maxTokenCap;",

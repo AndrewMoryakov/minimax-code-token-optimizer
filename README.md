@@ -378,10 +378,15 @@ OpenRouter.
 ```powershell
 $env:MAVIS_CONTEXT_BUDGET_PROFILE = "max"        # max, medium, free
 $env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe
-$env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override
+$env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override, see note below
 $env:MAVIS_PROMPT_CACHE_OPENROUTER = ""          # default off
 $env:MAVIS_REQUEST_GUARD_MODE = "observe"        # observe, enforce, off
 ```
+
+`MAVIS_MINIMAX_MAX_TOKENS` caps direct M3 output. The cap is never applied below
+`thinking.budget_tokens + 1024` when the request enables thinking: a provider
+rejects `max_tokens` at or below the thinking budget, and a cap with no room
+left after reasoning truncates the tool call the model was writing.
 
 OpenRouter:
 

@@ -27,7 +27,9 @@ export const STAGES = [
     appliedByCurrentPatcher: true,
     markers: [
       ["maxTokenCap8192", "var MINIMAX_DEFAULT_MAX_TOKENS = 8192"],
-      ["maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"]
+      ["maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"],
+      ["maxTokenThinkingGuard", "function minimaxMaxTokensCap(parsed) {"],
+      ["maxTokenThinkingCall", "const maxTokenCap = minimaxMaxTokensCap(parsed);"]
     ]
   },
   {

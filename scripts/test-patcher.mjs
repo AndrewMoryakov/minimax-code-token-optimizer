@@ -146,9 +146,14 @@ export {
 fs.writeFileSync(fixturePath, fixture, "utf8");
 
 function runApply(extraArgs = []) {
+  const hasTarget = extraArgs.includes("--target");
   const result = spawnSync(
     process.execPath,
-    [path.join(repoRoot, "scripts", "apply-mavis-opencode-optimizations.mjs"), "--target", fixturePath, ...extraArgs],
+    [
+      path.join(repoRoot, "scripts", "apply-mavis-opencode-optimizations.mjs"),
+      ...(hasTarget ? [] : ["--target", fixturePath]),
+      ...extraArgs
+    ],
     { cwd: repoRoot, encoding: "utf8" }
   );
   if (result.status !== 0) {
@@ -226,6 +231,32 @@ assert.equal(patchedBody.max_tokens, 8192);
 assert.equal(patchedRequest.details.maxTokensBefore, 32000);
 assert.equal(patchedRequest.details.maxTokensAfter, 8192);
 assert.equal(patchedRequest.changed, true);
+
+// The cap must never land at or below thinking.budget_tokens: providers reject
+// that outright, and it would truncate reasoning plus tool call.
+const thinkingRequest = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
+  max_tokens: 32000,
+  thinking: { type: "enabled", budget_tokens: 16000 },
+  messages: [{ role: "user", content: "hi" }]
+}));
+const thinkingBody = JSON.parse(thinkingRequest.body);
+assert.equal(thinkingBody.max_tokens, 17024);
+assert.ok(thinkingBody.max_tokens > thinkingBody.thinking.budget_tokens);
+
+// A small budget still gets the normal cap, and a request already under the cap
+// is left alone.
+const smallBudget = JSON.parse(patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
+  max_tokens: 32000,
+  thinking: { type: "enabled", budget_tokens: 2048 },
+  messages: []
+})).body);
+assert.equal(smallBudget.max_tokens, 8192);
+const disabledThinking = JSON.parse(patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
+  max_tokens: 4096,
+  thinking: { type: "disabled", budget_tokens: 16000 },
+  messages: []
+})).body);
+assert.equal(disabledThinking.max_tokens, 4096);
 const diagnostic = patchedModule.summarizeStringRequestBody(JSON.stringify({
   system: [{ type: "text", text: "system" }],
   messages: [{ role: "user", content: "hello" }],
@@ -287,6 +318,31 @@ assert.ok(transformed.systemPrompt.includes("## Operating Rules"));
 assert.ok(transformed.systemPrompt.includes("## Session Role"));
 assert.ok(!transformed.systemPrompt.includes("very long instructions very long instructions very long instructions"));
 assert.ok(!transformed.systemPrompt.includes("branch session details branch session details branch session details"));
+
+// A bundle patched by an older version carries the two-line cap with no
+// thinking guard. The patcher must upgrade it in place, not skip it as done.
+const legacyPath = path.join(tempDir, "legacy.js");
+const legacySource = fs.readFileSync(fixturePath, "utf8")
+  .replace("  const maxTokenCap = minimaxMaxTokensCap(parsed);", [
+    '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
+    "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;"
+  ].join("\n"))
+  .replace(/function minimaxMaxTokensCap\(parsed\) \{[\s\S]*?\n\}\n/, "");
+fs.writeFileSync(legacyPath, legacySource, "utf8");
+assert.ok(!legacySource.includes("minimaxMaxTokensCap"));
+assert.equal(analyzeBundleFile(legacyPath).finalPatchPresent, false);
+
+const upgrade = JSON.parse(runApply(["--json", "--target", legacyPath]).stdout);
+assert.equal(upgrade.changed, true);
+assert.ok(upgrade.changes.includes("upgraded existing max_tokens clamp to respect thinking budget"));
+assert.equal(analyzeBundleFile(legacyPath).finalPatchPresent, true);
+const upgradedModule = await import(`${pathToFileURL(legacyPath).href}?v=${Date.now()}`);
+const upgradedBody = JSON.parse(upgradedModule.patchMiniMaxPromptCacheBody(JSON.stringify({
+  max_tokens: 32000,
+  thinking: { type: "enabled", budget_tokens: 16000 },
+  messages: []
+})).body);
+assert.equal(upgradedBody.max_tokens, 17024);
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);
