@@ -38,8 +38,8 @@ export const STAGES = [
     appliedByCurrentPatcher: true,
     markers: [
       ["cacheBreakpointCeiling", "var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;"],
-      ["cacheBreakpointCounter", "function countPromptCacheBreakpoints("],
-      ["cacheBreakpointBudgetCall", "MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed)"]
+      ["cacheBreakpointCap", "function capPromptCacheBreakpoints("],
+      ["cacheBreakpointCapCall", "const cappedBreakpoints = capPromptCacheBreakpoints(parsed);"]
     ]
   },
   {
@@ -71,7 +71,7 @@ export const STAGES = [
     markers: [
       ["trimToolDefinitionForMax", "function trimToolDefinitionForMax(input, output) {"],
       ["trimSchemaDescriptionsForMax", "function trimSchemaDescriptionsForMax(value"],
-      ["skillToolShortDescription", "output.description = SKILL_TOOL_DESCRIPTION"],
+      ["toolEnumerationsPreserved", "preserveToolEnumerations(originalDescription"],
       ["toolDefinitionTrimCall", "trimToolDefinitionForMax(input, output);"]
     ]
   },
@@ -82,7 +82,8 @@ export const STAGES = [
     markers: [
       ["trimFinalToolDescriptionsForMax", "function trimFinalToolDescriptionsForMax(tools) {"],
       ["toolDescriptionsTrimmed", "toolDescriptionsTrimmed"],
-      ["finalToolTrimCall", "const finalToolDescriptions = trimFinalToolDescriptionsForMax(parsed.tools);"]
+      ["finalToolTrimCall", "const finalToolDescriptions = trimFinalToolDescriptionsForMax(parsed.tools);"],
+      ["finalToolEnumerationsPreserved", "preserveToolEnumerations(before"]
     ]
   },
   {

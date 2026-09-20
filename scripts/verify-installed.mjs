@@ -60,6 +60,9 @@ check(source.includes("process.env.MAVIS_MINIMAX_MAX_TOKENS"), "output cap env o
 check(source.includes("function minimaxMaxTokensCap(parsed) {"), "thinking-aware output cap present");
 check(source.includes("const maxTokenCap = minimaxMaxTokensCap(parsed);"), "output cap clamp uses thinking-aware cap");
 check(source.includes("function trimFinalToolDescriptionsForMax(tools) {"), "final tool description trim present");
+check(source.includes("function capPromptCacheBreakpoints("), "prompt cache breakpoint ceiling present");
+check(source.includes("const cappedBreakpoints = capPromptCacheBreakpoints(parsed);"), "breakpoint ceiling applied to request body");
+check(source.includes("function preserveToolEnumerations("), "tool enumeration preservation present");
 check(source.includes("toolDescriptionsTrimmed"), "tool trim diagnostics present");
 check(source.includes("patchMiniMaxPromptCacheBody,"), "request patcher exported for smoke tests");
 check(source.includes("sectionBytes"), "request section-byte diagnostics present");

@@ -36,9 +36,9 @@ ship a patchable OpenCode plugin bundle at
 %LOCALAPPDATA%\Programs\MiniMax Code\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js
 ```
 
-MiniMax Code v2 (verified on Mavis 3.0.68.134, and the same is true on 3.0.59)
-replaced that runtime with `@mavis/local-runtime` inside `app.asar`. On such an
-install:
+MiniMax Code v2 (verified on Mavis 3.0.68.134; on 3.0.59 only the absence of
+the bundle was checked) replaced that runtime with `@mavis/local-runtime`
+inside `app.asar`. On such an install:
 
 - the bundle above does not exist, so the patcher has nothing to patch;
 - `@mavis/local-runtime` keeps opencode only as migration code, and its own
@@ -48,7 +48,9 @@ install:
   `MAVIS_MINIMAX_MAX_TOKENS`, `opencode.json` or `context-budget/config`, so the
   standalone plugins, the environment knobs and `policy.json` have no effect.
 
-The installer detects this and refuses:
+The installer detects this and refuses, including with `--skip-bundle`: the
+standalone plugins and `policy.json` are inert there, so there is nothing safe
+left to install.
 
 ```text
 install_layout=v2-local-runtime

@@ -154,7 +154,21 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   } else if (typeof parsed.max_tokens === "number") {
     details.maxTokensAfter = parsed.max_tokens;
   }
-${promptCacheBudgetBody()}  const tools = annotatePromptCacheTools(parsed.tools);
+  if (annotateLastContentBlock(parsed.system)) {
+    details.lastSystem = 1;
+    changed = true;
+  }
+  if (Array.isArray(parsed.messages)) {
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
+        details.lastUser = 1;
+        changed = true;
+        break;
+      }
+    }
+  }
+  const tools = annotatePromptCacheTools(parsed.tools);
   if (tools !== parsed.tools) {
     parsed.tools = tools;
     changed = true;
@@ -185,39 +199,32 @@ function promptCacheAnnotateFunction() {
 `;
 }
 
-function promptCacheCountFunction() {
-  return `function countPromptCacheBreakpoints(value) {
-  if (Array.isArray(value)) {
-    let total2 = 0;
-    for (const item of value) total2 += countPromptCacheBreakpoints(item);
-    return total2;
-  }
-  if (!value || typeof value !== "object") return 0;
-  let total2 = value.cache_control ? 1 : 0;
-  for (const child of Object.values(value)) total2 += countPromptCacheBreakpoints(child);
-  return total2;
-}
-`;
-}
-
-function promptCacheBudgetBody() {
-  return `  let breakpointBudget = MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed);
-  if (breakpointBudget > 0 && annotateLastContentBlock(parsed.system)) {
-    details.lastSystem = 1;
-    breakpointBudget -= 1;
-    changed = true;
-  }
-  if (breakpointBudget > 0 && Array.isArray(parsed.messages)) {
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
-        details.lastUser = 1;
-        breakpointBudget -= 1;
-        changed = true;
-        break;
-      }
+function promptCacheCapFunction() {
+  return `var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;
+function capPromptCacheBreakpoints(parsed) {
+  const marked = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
     }
+    if (!value || typeof value !== "object") return;
+    if (value.cache_control) marked.push(value);
+    for (const child of Object.values(value)) visit(child);
+  };
+  // Visited in provider prefix order, so the markers that survive are the ones
+  // covering the longest reusable prefix.
+  visit(parsed?.tools);
+  visit(parsed?.system);
+  visit(parsed?.messages);
+  if (marked.length <= MINIMAX_MAX_CACHE_BREAKPOINTS) return 0;
+  let removed = 0;
+  for (const block of marked.slice(MINIMAX_MAX_CACHE_BREAKPOINTS)) {
+    delete block.cache_control;
+    removed += 1;
   }
+  return removed;
+}
 `;
 }
 
@@ -707,6 +714,50 @@ function applyBundleRequestGuard(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function preserveToolEnumerationsFunction() {
+  return `function preserveToolEnumerations(original, replacement, maxKeptChars = 1200) {
+  if (typeof original !== "string" || !original) return replacement;
+  // A short replacement description is fine, but the enumerations inside a tool
+  // description are the only place the model learns which agents or skills it
+  // may name. Dropping them leaves it inventing values the tool then rejects.
+  const blocks = original.match(/<([a-zA-Z_][\\w-]*)>[\\s\\S]*?<\\/\\1>/g) || [];
+  const kept = [];
+  let used = 0;
+  for (const block of blocks) {
+    if (!/available|agent|skill|subagent|mode|type/i.test(block)) continue;
+    if (used + block.length > maxKeptChars) continue;
+    kept.push(block);
+    used += block.length;
+  }
+  return kept.length > 0 ? replacement + "\\n" + kept.join("\\n") : replacement;
+}
+`;
+}
+
+function trimToolDefinitionFunction() {
+  return `function trimToolDefinitionForMax(input, output) {
+  if (promptSurfaceLimits().profile !== "max") return;
+  // Captured before compaction: the enumerations live past the 180 char cut.
+  const originalDescription = typeof output.description === "string" ? output.description : "";
+  if (typeof output.description === "string") {
+    output.description = compactDescription(output.description, 180);
+  }
+  if (input.toolID === "bash") {
+    output.description = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
+  } else if (input.toolID === "skill") {
+    output.description = preserveToolEnumerations(originalDescription, SKILL_TOOL_DESCRIPTION);
+  } else if (input.toolID === "todowrite") {
+    output.description = "Create or update the concise task checklist for this session.";
+  } else if (input.toolID === "ask_user") {
+    output.description = "Ask the user only when required to continue safely.";
+  } else if (input.toolID === "task") {
+    output.description = preserveToolEnumerations(originalDescription, "Delegate a bounded task to another agent when it materially helps.");
+  }
+  trimSchemaDescriptionsForMax(output.parameters, 72);
+}
+`;
+}
+
 function toolDefinitionTrimHelpers() {
   return `function preserveToolEnumerations(original, replacement, maxKeptChars = 1200) {
   if (typeof original !== "string" || !original) return replacement;
@@ -811,6 +862,22 @@ function applyToolDefinitionTrim(source, analysis) {
   if (!out.includes("trimToolDefinitionForMax(input, output);")) {
     out = insertToolDefinitionTrimCall(out);
     changed.push("enabled tool-definition trim hook");
+  }
+
+  // A bundle trimmed by an earlier version drops the enumerations inside task
+  // and skill descriptions. Rewrite that trim rather than leaving it.
+  if (!out.includes("function preserveToolEnumerations(")) {
+    out = replaceOnce(
+      out,
+      "function trimSchemaDescriptionsForMax(value",
+      `${preserveToolEnumerationsFunction()}function trimSchemaDescriptionsForMax(value`,
+      "insert enumeration preservation helper"
+    );
+    changed.push("inserted tool enumeration preservation helper");
+  }
+  if (!out.includes("preserveToolEnumerations(originalDescription")) {
+    out = replaceFunction(out, "trimToolDefinitionForMax", trimToolDefinitionFunction().trimEnd());
+    changed.push("kept tool description enumerations in the definition trim");
   }
 
   return { source: out, changed, skipped };
@@ -996,17 +1063,8 @@ function applyStaticPromptCompaction(source, analysis) {
   return { source: out, changed, skipped };
 }
 
-function applyFinalToolDescriptionTrim(source, analysis) {
-  let out = source;
-  const changed = [];
-  const skipped = [];
-
-  if (stageStatus(analysis, "final-tool-description-trim") === "present") {
-    skipped.push("final request-body tool description trim already present");
-  }
-
-  if (!out.includes("function trimFinalToolDescriptionsForMax(tools) {")) {
-    const helper = `function trimFinalToolDescriptionsForMax(tools) {
+function trimFinalToolDescriptionsFunction() {
+  return `function trimFinalToolDescriptionsForMax(tools) {
   if (promptSurfaceLimits().profile !== "max" || !Array.isArray(tools)) {
     return { changed: false, count: 0, beforeBytes: 0, afterBytes: 0 };
   }
@@ -1038,6 +1096,20 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   return { changed, count, beforeBytes, afterBytes };
 }
 `;
+}
+
+function applyFinalToolDescriptionTrim(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "final-tool-description-trim") === "present") {
+    skipped.push("final request-body tool description trim already present");
+  }
+
+  if (!out.includes("function trimFinalToolDescriptionsForMax(tools) {")) {
+    const helper = trimFinalToolDescriptionsFunction();
+
     out = replaceOnce(
       out,
       "function patchMiniMaxPromptCacheBody(bodyText) {",
@@ -1079,6 +1151,13 @@ function applyFinalToolDescriptionTrim(source, analysis) {
     changed.push("enabled final request-body tool trim");
   }
 
+  // Same upgrade as the definition trim: an older bundle strips enumerations
+  // out of the request body even when the hook above keeps them.
+  if (out.includes("function trimFinalToolDescriptionsForMax(tools) {") && !out.includes("preserveToolEnumerations(before")) {
+    out = replaceFunction(out, "trimFinalToolDescriptionsForMax", trimFinalToolDescriptionsFunction().trimEnd());
+    changed.push("kept tool description enumerations in the request-body trim");
+  }
+
   if (stageStatus(analysis, "request-patcher-test-export") === "present") {
     skipped.push("request patcher test export already present");
   }
@@ -1095,30 +1174,25 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   return { source: out, changed, skipped };
 }
 
-function promptCacheLegacyBudgetBody() {
-  return `  if (annotateLastContentBlock(parsed.system)) {
-    details.lastSystem = 1;
-    changed = true;
-  }
-  if (Array.isArray(parsed.messages)) {
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
-        details.lastUser = 1;
-        changed = true;
-        break;
-      }
-    }
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
-        details.lastTool = 1;
-        changed = true;
-        break;
-      }
-    }
-  }
-`;
+// Insert the ceiling check just before the request-body patcher returns. The
+// bundle shapes differ (the shipped one annotates tools, system and last user
+// through three helpers; the bootstrap writes two), so anchor on the final
+// return rather than on any particular annotation code.
+function insertBreakpointCapCall(source) {
+  const range = findFunctionRange(source, "patchMiniMaxPromptCacheBody");
+  if (!range) return null;
+  const fn = source.slice(range.start, range.end);
+  const anchor = fn.lastIndexOf("\n  return {");
+  if (anchor === -1) return null;
+  const call = [
+    "",
+    "  const cappedBreakpoints = capPromptCacheBreakpoints(parsed);",
+    "  if (cappedBreakpoints > 0) {",
+    "    details.breakpointsRemoved = cappedBreakpoints;",
+    "    changed = true;",
+    "  }"
+  ].join("\n");
+  return `${source.slice(0, range.start)}${fn.slice(0, anchor)}${call}${fn.slice(anchor)}${source.slice(range.end)}`;
 }
 
 function applyCacheBreakpointBudget(source, analysis) {
@@ -1131,42 +1205,24 @@ function applyCacheBreakpointBudget(source, analysis) {
     return { source: out, changed, skipped };
   }
 
-  if (!out.includes("function annotatePromptCacheTextBlock(")) {
-    skipped.push("breakpoint budget skipped: prompt cache annotation helpers not found");
-    return { source: out, changed, skipped };
-  }
-
-  if (!out.includes("var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;")) {
+  if (!out.includes("function capPromptCacheBreakpoints(")) {
     out = replaceOnce(
       out,
       "function isMiniMaxPromptCacheTarget(input, init) {",
-      "var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;\nfunction isMiniMaxPromptCacheTarget(input, init) {",
+      `${promptCacheCapFunction()}function isMiniMaxPromptCacheTarget(input, init) {`,
       "insert cache breakpoint ceiling"
     );
     changed.push("inserted cache breakpoint ceiling");
   }
 
-  if (!out.includes("function countPromptCacheBreakpoints(")) {
-    out = replaceOnce(
-      out,
-      "function annotatePromptCacheTextBlock(",
-      `${promptCacheCountFunction()}function annotatePromptCacheTextBlock(`,
-      "insert cache breakpoint counter"
-    );
-    changed.push("inserted cache breakpoint counter");
-  }
-
-  if (!out.includes("// further back when it is already marked just spends another breakpoint.")) {
-    out = replaceFunction(out, "annotateLastContentBlock", promptCacheAnnotateFunction().trimEnd());
-    changed.push("stopped marking a second block when the last one is already cached");
-  }
-
-  const legacyBody = `${promptCacheLegacyBudgetBody()}`;
-  if (out.includes(legacyBody)) {
-    out = replaceOnce(out, legacyBody, promptCacheBudgetBody(), "apply cache breakpoint budget");
+  if (!out.includes("const cappedBreakpoints = capPromptCacheBreakpoints(parsed);")) {
+    const capped = insertBreakpointCapCall(out);
+    if (capped === null) {
+      skipped.push("breakpoint cap skipped: request body patcher return not found");
+      return { source: out, changed, skipped };
+    }
+    out = capped;
     changed.push("capped prompt cache breakpoints at four per request");
-  } else if (!out.includes("MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed)")) {
-    skipped.push("breakpoint budget skipped: request body annotation anchor not found");
   }
 
   return { source: out, changed, skipped };
