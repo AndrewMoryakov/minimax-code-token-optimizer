@@ -60,6 +60,21 @@ function summarizeStringRequestBody(body) {
     largestTools
   };
 }
+function annotatePromptCacheTextBlock(block) {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return false;
+  if (block.type !== "text" || typeof block.text !== "string" || !block.text.trim()) return false;
+  if (block.cache_control?.type === "ephemeral") return false;
+  block.cache_control = { type: "ephemeral" };
+  return true;
+}
+function annotateLastContentBlock(content) {
+  if (Array.isArray(content)) {
+    for (let i = content.length - 1; i >= 0; i -= 1) {
+      if (annotatePromptCacheTextBlock(content[i])) return true;
+    }
+  }
+  return false;
+}
 function patchMiniMaxPromptCacheBody(bodyText) {
   const parsed = JSON.parse(bodyText);
   const details = {
@@ -69,6 +84,28 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   };
   let added = 0;
   let changed = false;
+  if (annotateLastContentBlock(parsed.system)) {
+    details.lastSystem = 1;
+    changed = true;
+  }
+  if (Array.isArray(parsed.messages)) {
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
+        details.lastUser = 1;
+        changed = true;
+        break;
+      }
+    }
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
+        details.lastTool = 1;
+        changed = true;
+        break;
+      }
+    }
+  }
   const tools = annotatePromptCacheTools(parsed.tools);
   return { body: JSON.stringify(parsed), details, changed, added: added + tools.added };
 }
@@ -257,6 +294,45 @@ const disabledThinking = JSON.parse(patchedModule.patchMiniMaxPromptCacheBody(JS
   messages: []
 })).body);
 assert.equal(disabledThinking.max_tokens, 4096);
+// Breakpoint budget: a body that already carries four markers must come back
+// untouched, and a fresh body must not spend more than the remaining budget.
+const countMarkers = (value) => (JSON.stringify(value).match(/"cache_control"/g) || []).length;
+const fullBody = {
+  system: [
+    { type: "text", text: "a", cache_control: { type: "ephemeral" } },
+    { type: "text", text: "b", cache_control: { type: "ephemeral" } }
+  ],
+  messages: [{
+    role: "user",
+    content: [
+      { type: "text", text: "ctx", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "q", cache_control: { type: "ephemeral" } }
+    ]
+  }]
+};
+const fullResult = patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify(fullBody));
+assert.equal(countMarkers(JSON.parse(fullResult.body)), 4);
+
+const freshBody = {
+  system: [{ type: "text", text: "a" }, { type: "text", text: "b" }],
+  messages: [{ role: "user", content: [{ type: "text", text: "file" }, { type: "text", text: "q" }] }]
+};
+const freshResult = JSON.parse(patchedModule.patchMiniMaxPromptCacheBody(JSON.stringify(freshBody)).body);
+assert.equal(countMarkers(freshResult), 2);
+assert.equal(freshResult.system[1].cache_control.type, "ephemeral");
+assert.equal(freshResult.system[0].cache_control, undefined);
+
+// The standalone plugin runs outside the bundle and marks first. The two
+// together must still stay within the four-breakpoint ceiling; before the
+// budget existed this combination produced five.
+const promptCachePlugin = (await import(pathToFileURL(path.join(repoRoot, "plugins", "prompt-cache.js")).href)).default;
+const pluginPatched = promptCachePlugin.__test.patchBody(JSON.stringify({
+  ...freshBody,
+  tools: [{ name: "bash", description: "d" }]
+}), "minimax");
+const afterBoth = JSON.parse(patchedModule.patchMiniMaxPromptCacheBody(pluginPatched.body).body);
+assert.ok(countMarkers(afterBoth) <= 4, `combined breakpoints: ${countMarkers(afterBoth)}`);
+
 const diagnostic = patchedModule.summarizeStringRequestBody(JSON.stringify({
   system: [{ type: "text", text: "system" }],
   messages: [{ role: "user", content: "hello" }],

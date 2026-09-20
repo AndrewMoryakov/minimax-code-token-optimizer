@@ -33,6 +33,16 @@ export const STAGES = [
     ]
   },
   {
+    id: "prompt-cache-breakpoint-budget",
+    label: "Prompt cache breakpoint budget",
+    appliedByCurrentPatcher: true,
+    markers: [
+      ["cacheBreakpointCeiling", "var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;"],
+      ["cacheBreakpointCounter", "function countPromptCacheBreakpoints("],
+      ["cacheBreakpointBudgetCall", "MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed)"]
+    ]
+  },
+  {
     id: "request-diagnostics",
     label: "Request section/tool diagnostics",
     appliedByCurrentPatcher: true,

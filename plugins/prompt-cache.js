@@ -7,10 +7,14 @@
 //   MAVIS_PROMPT_CACHE_MODE=enforce  -> actually mutate the request body (default)
 //   MAVIS_PROMPT_CACHE_DISABLED=1    -> no fetch patch at all
 //
-// Breakpoints we add (up to 4 allowed by MiniMax):
+// Breakpoints we add, never exceeding MAX_BREAKPOINTS in the whole body:
 //   1. last tool in `tools` array
 //   2. last block in `system` array (if array form)
 //   3. last text block of last user message (incremental conversation caching)
+//
+// Markers already present in the body count against the same budget. The caller
+// upstream (and the patched bundle downstream) may have placed some already;
+// an Anthropic-compatible endpoint rejects a body carrying more than four.
 //
 // Loaded AFTER `mavis` in plugin order so Mavis's existing fetch patch
 // (thinking mode) runs first and we patch on top.
@@ -35,6 +39,9 @@ const log = (event, payload = {}) => {
 if (!disabled) {
   log("loaded", { mode });
 }
+
+const MAX_BREAKPOINTS = 4;
+const CACHE_ERROR_RE = /cache_control|cache breakpoint|too many.*cache/i;
 
 const TARGET_PATH_RE = /\/v1\/messages(\?|$)/;
 const TARGET_HOST = "agent.minimax.io";
@@ -62,6 +69,18 @@ function requestTarget(url, init) {
 
 function isTargetRequest(url, init) {
   return requestTarget(url, init) === "minimax";
+}
+
+function countBreakpoints(value) {
+  if (Array.isArray(value)) {
+    let total = 0;
+    for (const item of value) total += countBreakpoints(item);
+    return total;
+  }
+  if (!value || typeof value !== "object") return 0;
+  let total = value.cache_control ? 1 : 0;
+  for (const child of Object.values(value)) total += countBreakpoints(child);
+  return total;
 }
 
 function annotateTools(tools) {
@@ -214,31 +233,40 @@ function patchBody(bodyText, target = "minimax") {
   }
 
   let added = 0;
+  const existing = countBreakpoints(parsed);
   const details = {
     target: "minimax",
     toolsCount: Array.isArray(parsed.tools) ? parsed.tools.length : 0,
     systemShape: typeof parsed.system === "string" ? "string" : Array.isArray(parsed.system) ? "array" : typeof parsed.system,
     messagesCount: Array.isArray(parsed.messages) ? parsed.messages.length : 0,
+    existingBreakpoints: existing,
     tools: 0,
     system: 0,
     lastUser: 0,
   };
-  const t = annotateTools(parsed.tools);
+  let budget = MAX_BREAKPOINTS - existing;
+  if (budget <= 0) {
+    return { body: bodyText, breakpointsAdded: 0, parseError: false, details };
+  }
+  const t = budget > 0 ? annotateTools(parsed.tools) : { tools: parsed.tools, added: 0 };
   if (t.added) {
     parsed.tools = t.tools;
     added += t.added;
+    budget -= t.added;
     details.tools = t.added;
   }
-  const s = annotateSystem(parsed.system);
+  const s = budget > 0 ? annotateSystem(parsed.system) : { system: parsed.system, added: 0 };
   if (s.added) {
     parsed.system = s.system;
     added += s.added;
+    budget -= s.added;
     details.system = s.added;
   }
-  const m = annotateLastUserMessage(parsed.messages);
+  const m = budget > 0 ? annotateLastUserMessage(parsed.messages) : { messages: parsed.messages, added: 0 };
   if (m.added) {
     parsed.messages = m.messages;
     added += m.added;
+    budget -= m.added;
     details.lastUser = m.added;
   }
   return { body: JSON.stringify(parsed), breakpointsAdded: added, parseError: false, details };
@@ -294,19 +322,19 @@ function installFetchPatch() {
       throw e;
     }
 
-    // In enforce mode, if the provider rejects our cache markers (4xx), fail
-    // open by retrying without the patch. Otherwise a single incompatible
-    // marker would break every model call until the operator intervenes.
-    if (
-      mode === "enforce" &&
-      patched &&
-      patched.breakpointsAdded > 0 &&
-      response.status >= 400 &&
-      response.status < 500
-    ) {
-      log("retry_unpatched_on_provider_error", { url, status: response.status });
-      try { await response.arrayBuffer(); } catch (_) {}
-      return origFetch.call(this, input, init);
+    // In enforce mode, retry unpatched only when the provider complains about
+    // the cache markers themselves. Retrying on any 4xx doubled rate-limited
+    // (429) and guard-blocked (413) requests, which made those failures worse.
+    if (mode === "enforce" && patched && patched.breakpointsAdded > 0 && response.status === 400) {
+      let text = "";
+      try {
+        text = await response.clone().text();
+      } catch (_) {}
+      if (CACHE_ERROR_RE.test(text)) {
+        log("retry_unpatched_on_cache_error", { url, status: response.status });
+        return origFetch.call(this, input, init);
+      }
+      log("provider_error_not_cache_related", { url, status: response.status });
     }
     return response;
   };
@@ -326,4 +354,6 @@ export default async function plugin(_input) {
 plugin.__test = {
   patchBody,
   requestTarget,
+  countBreakpoints,
+  MAX_BREAKPOINTS,
 };

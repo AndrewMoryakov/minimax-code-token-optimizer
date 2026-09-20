@@ -377,7 +377,7 @@ OpenRouter.
 
 ```powershell
 $env:MAVIS_CONTEXT_BUDGET_PROFILE = "max"        # max, medium, free
-$env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe
+$env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe, ceiling of 4 breakpoints
 $env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override, see note below
 $env:MAVIS_PROMPT_CACHE_OPENROUTER = ""          # default off
 $env:MAVIS_REQUEST_GUARD_MODE = "observe"        # observe, enforce, off
@@ -427,6 +427,14 @@ Look for:
 - logs include `model_stream_request_start`;
 - logs include `sectionBytes` and `largestTools`;
 - `tool` section is much smaller than the original 60K+ byte payload.
+
+Prompt cache markers are capped at four `cache_control` breakpoints per request,
+counting markers that are already in the body. Anthropic-compatible endpoints
+reject a fifth one, and both the standalone plugin and the patched bundle add
+markers, so each counts what the other already placed. When the provider does
+reject the markers with a `400` mentioning `cache_control`, the plugin retries
+once without them; any other error, including `429` and `413`, is passed back
+unchanged rather than re-sent.
 
 If `cacheWriteTokens` and `cacheReadTokens` stay at `0`, do not treat that as a
 failed install. The prompt-cache path is still under investigation. The primary

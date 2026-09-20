@@ -125,15 +125,7 @@ function annotatePromptCacheTextBlock(block) {
   block.cache_control = { type: "ephemeral" };
   return true;
 }
-function annotateLastContentBlock(content) {
-  if (Array.isArray(content)) {
-    for (let i = content.length - 1; i >= 0; i -= 1) {
-      if (annotatePromptCacheTextBlock(content[i])) return true;
-    }
-  }
-  return false;
-}
-function annotatePromptCacheTools(tools) {
+${promptCacheAnnotateFunction()}${promptCacheCountFunction()}function annotatePromptCacheTools(tools) {
   return tools;
 }
 function patchMiniMaxPromptCacheBody(bodyText) {
@@ -161,29 +153,7 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   } else if (typeof parsed.max_tokens === "number") {
     details.maxTokensAfter = parsed.max_tokens;
   }
-  if (annotateLastContentBlock(parsed.system)) {
-    details.lastSystem = 1;
-    changed = true;
-  }
-  if (Array.isArray(parsed.messages)) {
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
-        details.lastUser = 1;
-        changed = true;
-        break;
-      }
-    }
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
-        details.lastTool = 1;
-        changed = true;
-        break;
-      }
-    }
-  }
-  const tools = annotatePromptCacheTools(parsed.tools);
+${promptCacheBudgetBody()}  const tools = annotatePromptCacheTools(parsed.tools);
   if (tools !== parsed.tools) {
     parsed.tools = tools;
     changed = true;
@@ -199,9 +169,61 @@ function applyMiniMaxPromptCache(input, init) {
 `;
 }
 
+function promptCacheAnnotateFunction() {
+  return `function annotateLastContentBlock(content) {
+  if (!Array.isArray(content)) return false;
+  for (let i = content.length - 1; i >= 0; i -= 1) {
+    const block = content[i];
+    if (!block || typeof block !== "object" || block.type !== "text") continue;
+    // The last text block is the only cache point worth taking here. Walking
+    // further back when it is already marked just spends another breakpoint.
+    return annotatePromptCacheTextBlock(block);
+  }
+  return false;
+}
+`;
+}
+
+function promptCacheCountFunction() {
+  return `function countPromptCacheBreakpoints(value) {
+  if (Array.isArray(value)) {
+    let total2 = 0;
+    for (const item of value) total2 += countPromptCacheBreakpoints(item);
+    return total2;
+  }
+  if (!value || typeof value !== "object") return 0;
+  let total2 = value.cache_control ? 1 : 0;
+  for (const child of Object.values(value)) total2 += countPromptCacheBreakpoints(child);
+  return total2;
+}
+`;
+}
+
+function promptCacheBudgetBody() {
+  return `  let breakpointBudget = MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed);
+  if (breakpointBudget > 0 && annotateLastContentBlock(parsed.system)) {
+    details.lastSystem = 1;
+    breakpointBudget -= 1;
+    changed = true;
+  }
+  if (breakpointBudget > 0 && Array.isArray(parsed.messages)) {
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
+        details.lastUser = 1;
+        breakpointBudget -= 1;
+        changed = true;
+        break;
+      }
+    }
+  }
+`;
+}
+
 function maxTokensCapHelper() {
   return `var MINIMAX_DEFAULT_MAX_TOKENS = 8192;
 var MINIMAX_THINKING_OUTPUT_MARGIN = 1024;
+var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;
 function minimaxMaxTokensCap(parsed) {
   const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
   const cap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
@@ -1054,6 +1076,83 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function promptCacheLegacyBudgetBody() {
+  return `  if (annotateLastContentBlock(parsed.system)) {
+    details.lastSystem = 1;
+    changed = true;
+  }
+  if (Array.isArray(parsed.messages)) {
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "user" && annotateLastContentBlock(message.content)) {
+        details.lastUser = 1;
+        changed = true;
+        break;
+      }
+    }
+    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
+      const message = parsed.messages[i];
+      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
+        details.lastTool = 1;
+        changed = true;
+        break;
+      }
+    }
+  }
+`;
+}
+
+function applyCacheBreakpointBudget(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "prompt-cache-breakpoint-budget") === "present") {
+    skipped.push("prompt cache breakpoint budget already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function annotatePromptCacheTextBlock(")) {
+    skipped.push("breakpoint budget skipped: prompt cache annotation helpers not found");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;")) {
+    out = replaceOnce(
+      out,
+      "function isMiniMaxPromptCacheTarget(input, init) {",
+      "var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;\nfunction isMiniMaxPromptCacheTarget(input, init) {",
+      "insert cache breakpoint ceiling"
+    );
+    changed.push("inserted cache breakpoint ceiling");
+  }
+
+  if (!out.includes("function countPromptCacheBreakpoints(")) {
+    out = replaceOnce(
+      out,
+      "function annotatePromptCacheTextBlock(",
+      `${promptCacheCountFunction()}function annotatePromptCacheTextBlock(`,
+      "insert cache breakpoint counter"
+    );
+    changed.push("inserted cache breakpoint counter");
+  }
+
+  if (!out.includes("// further back when it is already marked just spends another breakpoint.")) {
+    out = replaceFunction(out, "annotateLastContentBlock", promptCacheAnnotateFunction().trimEnd());
+    changed.push("stopped marking a second block when the last one is already cached");
+  }
+
+  const legacyBody = `${promptCacheLegacyBudgetBody()}`;
+  if (out.includes(legacyBody)) {
+    out = replaceOnce(out, legacyBody, promptCacheBudgetBody(), "apply cache breakpoint budget");
+    changed.push("capped prompt cache breakpoints at four per request");
+  } else if (!out.includes("MINIMAX_MAX_CACHE_BREAKPOINTS - countPromptCacheBreakpoints(parsed)")) {
+    skipped.push("breakpoint budget skipped: request body annotation anchor not found");
+  }
+
+  return { source: out, changed, skipped };
+}
+
 function applyStages(source) {
   const bootstrap = applyCompatibilityBootstrap(source);
   const beforeAnalysis = ensurePrerequisites(bootstrap.source);
@@ -1070,7 +1169,14 @@ function applyStages(source) {
     skipped: outputCap.skipped
   });
   const afterOutputCapAnalysis = analyzeBundleSource(outputCap.source);
-  const diagnostics = applyRequestDiagnostics(outputCap.source, afterOutputCapAnalysis);
+  const breakpointBudget = applyCacheBreakpointBudget(outputCap.source, afterOutputCapAnalysis);
+  stages.push({
+    id: "prompt-cache-breakpoint-budget",
+    changed: breakpointBudget.changed,
+    skipped: breakpointBudget.skipped
+  });
+  const afterBreakpointBudgetAnalysis = analyzeBundleSource(breakpointBudget.source);
+  const diagnostics = applyRequestDiagnostics(breakpointBudget.source, afterBreakpointBudgetAnalysis);
   stages.push({
     id: "request-diagnostics",
     changed: diagnostics.changed,
@@ -1114,8 +1220,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...requestGuard.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...requestGuard.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...breakpointBudget.changed, ...diagnostics.changed, ...requestGuard.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...breakpointBudget.skipped, ...diagnostics.skipped, ...requestGuard.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis
