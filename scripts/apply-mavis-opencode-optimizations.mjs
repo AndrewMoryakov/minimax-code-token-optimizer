@@ -126,7 +126,7 @@ function annotatePromptCacheTextBlock(block) {
   block.cache_control = { type: "ephemeral" };
   return true;
 }
-${promptCacheAnnotateFunction()}${promptCacheCountFunction()}function annotatePromptCacheTools(tools) {
+${promptCacheAnnotateFunction()}function annotatePromptCacheTools(tools) {
   return tools;
 }
 function patchMiniMaxPromptCacheBody(bodyText) {
