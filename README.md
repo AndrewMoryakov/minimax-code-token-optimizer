@@ -86,8 +86,11 @@ mavis --version
   lifecycle roles.
 - `main session`: the primary chat/coding conversation. This project keeps it
   on direct M3.
-- `lifecycle roles`: helper roles such as `plan`, `build`, `general`,
-  `explore`, and `small`.
+- `lifecycle roles`: keys in the routing table (`plan`, `build`, `general`,
+  `explore`, `small`). Only the ones matching a real Mavis agent take effect.
+  The agent names seen in the Mavis runtime databases are `mavis`, `verifier`,
+  `general`, `explore`, `worker` and `coder`, so `plan`, `build` and `small`
+  entries are inert there; `plan` and `build` come from vanilla OpenCode.
 - `bundle patch`: a guarded edit to the installed local
   `@mavis/opencode-plugin` file. The patcher creates a backup first.
 - `standalone plugins`: extra `.js` plugins copied into the user's Mavis
@@ -372,6 +375,13 @@ The important invariant:
 
 Main stays direct on `agent.minimax.io`; non-main roles may go through
 OpenRouter.
+
+The plugin fails safe in both directions. If `policy.json` is missing or does
+not parse, `main` stays on direct M3 rather than falling back to OpenRouter. If
+`opencode.json` already names a model, that choice is kept. A routing value
+naming a model the plugin does not register is skipped with a
+`skipped routing entries` warning instead of being handed to OpenCode as an
+unresolvable id.
 
 ## Environment Knobs
 
