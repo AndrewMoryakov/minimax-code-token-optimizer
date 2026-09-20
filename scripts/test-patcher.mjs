@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { analyzeBundleFile, analyzeBundleSource } from "./lib/bundle-analysis.mjs";
+import { checkSyntax } from "./lib/syntax-check.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mavis-token-optimizer-"));
@@ -200,6 +201,13 @@ function runApply(extraArgs = []) {
   assert.equal(result.status, 0);
   return result;
 }
+
+// The pre-write parse check has to fail on broken source, or it is decoration.
+assert.equal(checkSyntax("export const a = 1;\n").ok, true);
+assert.equal(checkSyntax("module.exports = { a: 1 };\n").parsedAs, "module");
+assert.equal(checkSyntax("const a = 1;\nfunction broken( {\n").ok, false);
+assert.ok(checkSyntax("const a = 1;\nfunction broken( {\n").errors.some((line) => /SyntaxError/.test(line)));
+assert.equal(checkSyntax(fixture).ok, true);
 
 let analysis = analyzeBundleFile(fixturePath);
 assert.equal(analysis.classification, "partially-patched");
@@ -419,6 +427,25 @@ const upgradedBody = JSON.parse(upgradedModule.patchMiniMaxPromptCacheBody(JSON.
   messages: []
 })).body);
 assert.equal(upgradedBody.max_tokens, 17024);
+
+// A bundle whose source defeats the brace matcher must not be written. This
+// fixture hides a brace inside a regular expression literal, which the matcher
+// counts as real, so replaceFunction slices past the end of the function.
+const trapPath = path.join(tempDir, "trap.js");
+const trapSource = fixture.replace(
+  "function promptMemoryTailCapChars() {\n  return MEMORY_TAIL_INJECTION_CAP_CHARS;\n}",
+  "function promptMemoryTailCapChars() {\n  const braceInRegex = /[{]/;\n  return braceInRegex.test(\"x\") ? 0 : MEMORY_TAIL_INJECTION_CAP_CHARS;\n}"
+);
+assert.ok(trapSource.includes("braceInRegex"), "trap fixture must differ from the plain fixture");
+fs.writeFileSync(trapPath, trapSource, "utf8");
+const trapRun = spawnSync(
+  process.execPath,
+  [path.join(repoRoot, "scripts", "apply-mavis-opencode-optimizations.mjs"), "--target", trapPath],
+  { cwd: repoRoot, encoding: "utf8" }
+);
+assert.notEqual(trapRun.status, 0, "the patcher must refuse a bundle it cannot patch cleanly");
+assert.match(`${trapRun.stderr}`, /braces are unbalanced|does not parse; nothing was written/);
+assert.equal(fs.readFileSync(trapPath, "utf8"), trapSource, "the target must be left byte for byte unchanged");
 
 const second = runApply(["--json"]);
 const secondReport = JSON.parse(second.stdout);

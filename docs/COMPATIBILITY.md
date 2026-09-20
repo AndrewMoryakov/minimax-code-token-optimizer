@@ -38,6 +38,9 @@ If the bundle is unsupported, the installer stops before writing.
 
 ## Safety Rules
 
+- The patched source is parse-checked before it is written, as a module and
+  then as CommonJS. If neither parses, nothing is written and the target keeps
+  its bytes.
 - Backups are created before writes.
 - Missing anchors stop or skip narrowly; the patcher does not guess broad edits.
 - API keys are never required in the repository.

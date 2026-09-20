@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyzeBundleSource, sha256 } from "./lib/bundle-analysis.mjs";
 import { defaultBundlePath, detectInstallLayout } from "./lib/install-layout.mjs";
+import { checkSyntax } from "./lib/syntax-check.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -1293,11 +1294,23 @@ if (result.changed.length === 0) {
   process.exit(0);
 }
 
+// Refuse to hand MiniMax a file that will not parse. This runs in dry-run too,
+// so a preview reports the problem instead of hiding it until the write.
+const syntax = checkSyntax(result.source);
+if (!syntax.ok) {
+  fail([
+    "patched bundle does not parse; nothing was written",
+    ...syntax.errors.map((line) => `  ${line}`),
+    `target left unchanged: ${target}`
+  ].join("\n"));
+}
+
 const afterHash = sha256(result.source);
 const baseReport = {
   target,
   changed: true,
   dryRun,
+  parsedAs: syntax.parsedAs,
   beforeSha256: beforeHash,
   afterSha256: afterHash,
   beforeClassification: result.beforeAnalysis.classification,
