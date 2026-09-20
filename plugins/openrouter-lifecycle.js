@@ -13,8 +13,14 @@ const POLICY_FILE = path.join(os.homedir(), ".mavis", "agents", "mavis", "contex
 const AUDIT_FILE = path.join(os.homedir(), ".mavis", "agents", "mavis", "context-budget", "ledger", "openrouter-lifecycle-audit.jsonl");
 const AUDIT_KEY = "__openrouterLifecycleAuditWritten";
 
+const DIRECT_M3 = "minimax/MiniMax-M3";
+
+// main defaults to the direct provider on purpose. When policy.json is missing
+// or unreadable the whole session would otherwise move to OpenRouter silently,
+// billed to the user's OpenRouter key, which is the opposite of this project's
+// stated invariant.
 const ROUTING = Object.freeze({
-  main: "openrouter/minimax/minimax-m3",
+  main: DIRECT_M3,
   small: "openrouter/qwen/qwen3-30b-a3b-instruct-2507",
   plan: "openrouter/deepseek/deepseek-v3.2",
   build: "openrouter/minimax/minimax-m3",
@@ -63,7 +69,8 @@ const MODELS = Object.freeze({
 
 function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    // MiniMax Desktop and Windows PowerShell can leave a UTF-8 BOM here.
+    return JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
   } catch (_) {
     return null;
   }
@@ -110,6 +117,16 @@ function ensureObject(target, key) {
 function selectedModel(policy, name) {
   const envKey = `MAVIS_OPENROUTER_${name.toUpperCase()}_MODEL`;
   return process.env[envKey] || policy?.routing?.[name] || ROUTING[name];
+}
+
+// A routing value is usable only if it is the direct model or an OpenRouter
+// model this plugin actually registers. Anything else would be handed to
+// OpenCode as a model id that no provider resolves.
+function usableModel(model) {
+  if (typeof model !== "string" || !model) return false;
+  if (model === DIRECT_M3) return true;
+  if (!model.startsWith(`${PROVIDER_ID}/`)) return false;
+  return Object.prototype.hasOwnProperty.call(MODELS, model.slice(PROVIDER_ID.length + 1));
 }
 
 function writeAudit(event) {
@@ -169,20 +186,38 @@ async function plugin() {
         },
       };
 
-      // Preserve explicit minimax/MiniMax-M3 selection from opencode.json so
-      // prompt-cache.js can still apply cache_control on agent.minimax.io traffic.
-      // Routing table is still consulted for everything else (plan/general/explore/small/build).
-      const explicitDirectM3 = config.model === "minimax/MiniMax-M3";
-      config.model = explicitDirectM3 ? config.model : routing.main;
-      config.small_model = routing.small;
+      // An explicit model in opencode.json wins: the user chose it. Otherwise
+      // routing.main applies, and its default keeps the session on direct M3 so
+      // prompt-cache.js can still mark agent.minimax.io traffic.
+      const skipped = [];
+      if (typeof config.model === "string" && config.model) {
+        if (config.model !== routing.main) skipped.push(`main: kept explicit ${config.model}`);
+      } else if (usableModel(routing.main)) {
+        config.model = routing.main;
+      } else {
+        skipped.push(`main: unknown model ${routing.main}`);
+        config.model = DIRECT_M3;
+      }
+      if (usableModel(routing.small)) {
+        config.small_model = routing.small;
+      } else {
+        skipped.push(`small: unknown model ${routing.small}`);
+      }
 
       const agents = ensureObject(config, "agent");
       for (const [agentName, model] of Object.entries(routing)) {
         if (agentName === "main" || agentName === "small") continue;
+        if (!usableModel(model)) {
+          skipped.push(`${agentName}: unknown model ${model}`);
+          continue;
+        }
         agents[agentName] = {
           ...(agents[agentName] || {}),
           model,
         };
+      }
+      if (skipped.length > 0) {
+        console.warn(`[openrouter-lifecycle] skipped routing entries: ${skipped.join("; ")}`);
       }
 
       auditOnce({
@@ -191,6 +226,8 @@ async function plugin() {
         key_source: apiKey.source,
         provider: PROVIDER_ID,
         base_url: BASE_URL,
+        effective_main: config.model,
+        skipped,
         prompt_cache_note: "MiniMax prompt-cache fetch patch targets agent.minimax.io by default; OpenRouter traffic is opt-in via MAVIS_PROMPT_CACHE_OPENROUTER=1.",
         routing,
       });
@@ -209,6 +246,6 @@ async function plugin() {
   };
 }
 
-plugin.__test = { readKey, readPolicy, lifecycleEnabled, selectedModel, ROUTING, MODELS };
+plugin.__test = { readKey, readPolicy, lifecycleEnabled, selectedModel, usableModel, ROUTING, MODELS, DIRECT_M3 };
 
 export default plugin;

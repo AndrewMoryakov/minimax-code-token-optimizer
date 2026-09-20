@@ -18,7 +18,13 @@
     "verify:installed": "node ./scripts/verify-installed.mjs",
     "apply:bundle": "node ./scripts/apply-mavis-opencode-optimizations.mjs",
     "test:patcher": "node ./scripts/test-patcher.mjs",
-    "check:repo": "node ./scripts/check-repo.mjs"
+    "check:repo": "node ./scripts/check-repo.mjs",
+    "test:layout": "node ./scripts/test-install-layout.mjs",
+    "test": "node ./scripts/test-patcher.mjs && node ./scripts/test-bootstrap.mjs && node ./scripts/test-install-layout.mjs && node ./scripts/test-plugins.mjs && node ./scripts/test-config-io.mjs && node ./scripts/test-cleanup.mjs",
+    "test:plugins": "node ./scripts/test-plugins.mjs",
+    "test:config": "node ./scripts/test-config-io.mjs",
+    "test:cleanup": "node ./scripts/test-cleanup.mjs",
+    "test:bootstrap": "node ./scripts/test-bootstrap.mjs"
   },
   "keywords": [
     "minimax",

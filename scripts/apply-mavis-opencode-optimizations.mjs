@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { analyzeBundleSource, sha256 } from "./lib/bundle-analysis.mjs";
+import { defaultBundlePath, detectInstallLayout } from "./lib/install-layout.mjs";
+import { checkSyntax } from "./lib/syntax-check.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 1) {
@@ -46,18 +47,7 @@ if (args.has("help")) {
   process.exit(0);
 }
 
-const defaultTarget = path.join(
-  process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"),
-  "Programs",
-  "MiniMax Code",
-  "resources",
-  "resources",
-  "daemon",
-  "node_modules",
-  "@mavis",
-  "opencode-plugin",
-  "index.js"
-);
+const defaultTarget = defaultBundlePath();
 
 const target = path.resolve(args.get("target") ?? defaultTarget);
 const dryRun = args.has("dry-run");
@@ -136,15 +126,7 @@ function annotatePromptCacheTextBlock(block) {
   block.cache_control = { type: "ephemeral" };
   return true;
 }
-function annotateLastContentBlock(content) {
-  if (Array.isArray(content)) {
-    for (let i = content.length - 1; i >= 0; i -= 1) {
-      if (annotatePromptCacheTextBlock(content[i])) return true;
-    }
-  }
-  return false;
-}
-function annotatePromptCacheTools(tools) {
+${promptCacheAnnotateFunction()}function annotatePromptCacheTools(tools) {
   return tools;
 }
 function patchMiniMaxPromptCacheBody(bodyText) {
@@ -164,8 +146,7 @@ function patchMiniMaxPromptCacheBody(bodyText) {
   }
   let changed = false;
   if (typeof parsed.max_tokens === "number") details.maxTokensBefore = parsed.max_tokens;
-  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
-  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
+  const maxTokenCap = minimaxMaxTokensCap(parsed);
   if (typeof parsed.max_tokens === "number" && parsed.max_tokens > maxTokenCap) {
     parsed.max_tokens = maxTokenCap;
     details.maxTokensAfter = maxTokenCap;
@@ -182,14 +163,6 @@ function patchMiniMaxPromptCacheBody(bodyText) {
       const message = parsed.messages[i];
       if (message?.role === "user" && annotateLastContentBlock(message.content)) {
         details.lastUser = 1;
-        changed = true;
-        break;
-      }
-    }
-    for (let i = parsed.messages.length - 1; i >= 0; i -= 1) {
-      const message = parsed.messages[i];
-      if (message?.role === "tool" && annotateLastContentBlock(message.content)) {
-        details.lastTool = 1;
         changed = true;
         break;
       }
@@ -211,6 +184,69 @@ function applyMiniMaxPromptCache(input, init) {
 `;
 }
 
+function promptCacheAnnotateFunction() {
+  return `function annotateLastContentBlock(content) {
+  if (!Array.isArray(content)) return false;
+  for (let i = content.length - 1; i >= 0; i -= 1) {
+    const block = content[i];
+    if (!block || typeof block !== "object" || block.type !== "text") continue;
+    // The last text block is the only cache point worth taking here. Walking
+    // further back when it is already marked just spends another breakpoint.
+    return annotatePromptCacheTextBlock(block);
+  }
+  return false;
+}
+`;
+}
+
+function promptCacheCapFunction() {
+  return `var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;
+function capPromptCacheBreakpoints(parsed) {
+  const marked = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (value.cache_control) marked.push(value);
+    for (const child of Object.values(value)) visit(child);
+  };
+  // Visited in provider prefix order, so the markers that survive are the ones
+  // covering the longest reusable prefix.
+  visit(parsed?.tools);
+  visit(parsed?.system);
+  visit(parsed?.messages);
+  if (marked.length <= MINIMAX_MAX_CACHE_BREAKPOINTS) return 0;
+  let removed = 0;
+  for (const block of marked.slice(MINIMAX_MAX_CACHE_BREAKPOINTS)) {
+    delete block.cache_control;
+    removed += 1;
+  }
+  return removed;
+}
+`;
+}
+
+function maxTokensCapHelper() {
+  return `var MINIMAX_DEFAULT_MAX_TOKENS = 8192;
+var MINIMAX_THINKING_OUTPUT_MARGIN = 1024;
+var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;
+function minimaxMaxTokensCap(parsed) {
+  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);
+  const cap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;
+  const thinking = parsed?.thinking;
+  const budget = thinking && typeof thinking === "object" && thinking.type !== "disabled" && typeof thinking.budget_tokens === "number"
+    ? thinking.budget_tokens
+    : 0;
+  if (budget <= 0) return cap;
+  // Providers reject max_tokens <= thinking.budget_tokens, and a cap that leaves
+  // no room after reasoning truncates tool calls mid-write. Never cap below it.
+  return Math.max(cap, budget + MINIMAX_THINKING_OUTPUT_MARGIN);
+}
+`;
+}
+
 function applyCompatibilityBootstrap(source) {
   let out = source;
   const changed = [];
@@ -228,14 +264,14 @@ function applyCompatibilityBootstrap(source) {
     skipped.push("compatibility bootstrap helpers already present");
   }
 
-  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+  if (!out.includes("function minimaxMaxTokensCap(parsed) {")) {
     out = replaceOnce(
       out,
       "function promptSurfaceLimits() {",
-      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction promptSurfaceLimits() {",
-      "insert compatibility max token constant"
+      `${maxTokensCapHelper()}function promptSurfaceLimits() {`,
+      "insert compatibility max token cap helper"
     );
-    changed.push("inserted direct M3 default max_tokens cap");
+    changed.push("inserted direct M3 thinking-aware max_tokens cap");
   }
 
   if (!out.includes("const promptCachePatch = applyMiniMaxPromptCache(input, init);")) {
@@ -278,14 +314,31 @@ function applyDirectM3OutputCap(source, analysis) {
     return { source: out, changed, skipped };
   }
 
-  if (!out.includes("var MINIMAX_DEFAULT_MAX_TOKENS = 8192")) {
+  if (!out.includes("function minimaxMaxTokensCap(parsed) {")) {
     out = replaceOnce(
       out,
       "function isMiniMaxPromptCacheTarget(input, init) {",
-      "var MINIMAX_DEFAULT_MAX_TOKENS = 8192;\nfunction isMiniMaxPromptCacheTarget(input, init) {",
-      "insert MINIMAX_DEFAULT_MAX_TOKENS"
+      `${maxTokensCapHelper()}function isMiniMaxPromptCacheTarget(input, init) {`,
+      "insert max_tokens cap helper"
     );
-    changed.push("inserted direct M3 default max_tokens cap");
+    changed.push("inserted direct M3 thinking-aware max_tokens cap");
+  }
+
+  // Bundles patched before the thinking guard existed carry the old two-line
+  // cap. Rewrite it in place instead of leaving a cap that can land below
+  // thinking.budget_tokens.
+  const legacyCapLines = [
+    '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
+    "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;"
+  ].join("\n");
+  if (out.includes(legacyCapLines)) {
+    out = replaceOnce(
+      out,
+      legacyCapLines,
+      "  const maxTokenCap = minimaxMaxTokensCap(parsed);",
+      "upgrade legacy max_tokens cap"
+    );
+    changed.push("upgraded existing max_tokens clamp to respect thinking budget");
   }
 
   if (!out.includes("maxTokensBefore: typeof parsed.max_tokens === \"number\" ? parsed.max_tokens : void 0")) {
@@ -300,13 +353,12 @@ function applyDirectM3OutputCap(source, analysis) {
     changed.push("added max_tokens diagnostics");
   }
 
-  if (!out.includes("process.env.MAVIS_MINIMAX_MAX_TOKENS")) {
+  if (!out.includes("const maxTokenCap = minimaxMaxTokensCap(parsed);")) {
     out = replaceOnce(
       out,
       "  const tools = annotatePromptCacheTools(parsed.tools);\n",
       [
-        '  const configuredCap = Number.parseInt(process.env.MAVIS_MINIMAX_MAX_TOKENS ?? "", 10);',
-        "  const maxTokenCap = Number.isFinite(configuredCap) && configuredCap > 0 ? configuredCap : MINIMAX_DEFAULT_MAX_TOKENS;",
+        "  const maxTokenCap = minimaxMaxTokensCap(parsed);",
         "  if (typeof parsed.max_tokens === \"number\" && parsed.max_tokens > maxTokenCap) {",
         "    parsed.max_tokens = maxTokenCap;",
         "    details.maxTokensAfter = maxTokenCap;",
@@ -662,8 +714,68 @@ function applyBundleRequestGuard(source, analysis) {
   return { source: out, changed, skipped };
 }
 
+function preserveToolEnumerationsFunction() {
+  return `function preserveToolEnumerations(original, replacement, maxKeptChars = 1200) {
+  if (typeof original !== "string" || !original) return replacement;
+  // A short replacement description is fine, but the enumerations inside a tool
+  // description are the only place the model learns which agents or skills it
+  // may name. Dropping them leaves it inventing values the tool then rejects.
+  const blocks = original.match(/<([a-zA-Z_][\\w-]*)>[\\s\\S]*?<\\/\\1>/g) || [];
+  const kept = [];
+  let used = 0;
+  for (const block of blocks) {
+    if (!/available|agent|skill|subagent|mode|type/i.test(block)) continue;
+    if (used + block.length > maxKeptChars) continue;
+    kept.push(block);
+    used += block.length;
+  }
+  return kept.length > 0 ? replacement + "\\n" + kept.join("\\n") : replacement;
+}
+`;
+}
+
+function trimToolDefinitionFunction() {
+  return `function trimToolDefinitionForMax(input, output) {
+  if (promptSurfaceLimits().profile !== "max") return;
+  // Captured before compaction: the enumerations live past the 180 char cut.
+  const originalDescription = typeof output.description === "string" ? output.description : "";
+  if (typeof output.description === "string") {
+    output.description = compactDescription(output.description, 180);
+  }
+  if (input.toolID === "bash") {
+    output.description = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
+  } else if (input.toolID === "skill") {
+    output.description = preserveToolEnumerations(originalDescription, SKILL_TOOL_DESCRIPTION);
+  } else if (input.toolID === "todowrite") {
+    output.description = "Create or update the concise task checklist for this session.";
+  } else if (input.toolID === "ask_user") {
+    output.description = "Ask the user only when required to continue safely.";
+  } else if (input.toolID === "task") {
+    output.description = preserveToolEnumerations(originalDescription, "Delegate a bounded task to another agent when it materially helps.");
+  }
+  trimSchemaDescriptionsForMax(output.parameters, 72);
+}
+`;
+}
+
 function toolDefinitionTrimHelpers() {
-  return `function trimSchemaDescriptionsForMax(value, maxLen = 80) {
+  return `function preserveToolEnumerations(original, replacement, maxKeptChars = 1200) {
+  if (typeof original !== "string" || !original) return replacement;
+  // A short replacement description is fine, but the enumerations inside a tool
+  // description are the only place the model learns which agents or skills it
+  // may name. Dropping them leaves it inventing values the tool then rejects.
+  const blocks = original.match(/<([a-zA-Z_][\\w-]*)>[\\s\\S]*?<\\/\\1>/g) || [];
+  const kept = [];
+  let used = 0;
+  for (const block of blocks) {
+    if (!/available|agent|skill|subagent|mode|type/i.test(block)) continue;
+    if (used + block.length > maxKeptChars) continue;
+    kept.push(block);
+    used += block.length;
+  }
+  return kept.length > 0 ? replacement + "\\n" + kept.join("\\n") : replacement;
+}
+function trimSchemaDescriptionsForMax(value, maxLen = 80) {
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) {
     for (const item of value) trimSchemaDescriptionsForMax(item, maxLen);
@@ -680,19 +792,21 @@ function toolDefinitionTrimHelpers() {
 }
 function trimToolDefinitionForMax(input, output) {
   if (promptSurfaceLimits().profile !== "max") return;
+  // Captured before compaction: the enumerations live past the 180 char cut.
+  const originalDescription = typeof output.description === "string" ? output.description : "";
   if (typeof output.description === "string") {
     output.description = compactDescription(output.description, 180);
   }
   if (input.toolID === "bash") {
     output.description = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
   } else if (input.toolID === "skill") {
-    output.description = SKILL_TOOL_DESCRIPTION;
+    output.description = preserveToolEnumerations(originalDescription, SKILL_TOOL_DESCRIPTION);
   } else if (input.toolID === "todowrite") {
     output.description = "Create or update the concise task checklist for this session.";
   } else if (input.toolID === "ask_user") {
     output.description = "Ask the user only when required to continue safely.";
   } else if (input.toolID === "task") {
-    output.description = "Delegate a bounded task to another agent when it materially helps.";
+    output.description = preserveToolEnumerations(originalDescription, "Delegate a bounded task to another agent when it materially helps.");
   }
   trimSchemaDescriptionsForMax(output.parameters, 72);
 }
@@ -748,6 +862,22 @@ function applyToolDefinitionTrim(source, analysis) {
   if (!out.includes("trimToolDefinitionForMax(input, output);")) {
     out = insertToolDefinitionTrimCall(out);
     changed.push("enabled tool-definition trim hook");
+  }
+
+  // A bundle trimmed by an earlier version drops the enumerations inside task
+  // and skill descriptions. Rewrite that trim rather than leaving it.
+  if (!out.includes("function preserveToolEnumerations(")) {
+    out = replaceOnce(
+      out,
+      "function trimSchemaDescriptionsForMax(value",
+      `${preserveToolEnumerationsFunction()}function trimSchemaDescriptionsForMax(value`,
+      "insert enumeration preservation helper"
+    );
+    changed.push("inserted tool enumeration preservation helper");
+  }
+  if (!out.includes("preserveToolEnumerations(originalDescription")) {
+    out = replaceFunction(out, "trimToolDefinitionForMax", trimToolDefinitionFunction().trimEnd());
+    changed.push("kept tool description enumerations in the definition trim");
   }
 
   return { source: out, changed, skipped };
@@ -933,17 +1063,8 @@ function applyStaticPromptCompaction(source, analysis) {
   return { source: out, changed, skipped };
 }
 
-function applyFinalToolDescriptionTrim(source, analysis) {
-  let out = source;
-  const changed = [];
-  const skipped = [];
-
-  if (stageStatus(analysis, "final-tool-description-trim") === "present") {
-    skipped.push("final request-body tool description trim already present");
-  }
-
-  if (!out.includes("function trimFinalToolDescriptionsForMax(tools) {")) {
-    const helper = `function trimFinalToolDescriptionsForMax(tools) {
+function trimFinalToolDescriptionsFunction() {
+  return `function trimFinalToolDescriptionsForMax(tools) {
   if (promptSurfaceLimits().profile !== "max" || !Array.isArray(tools)) {
     return { changed: false, count: 0, beforeBytes: 0, afterBytes: 0 };
   }
@@ -956,11 +1077,11 @@ function applyFinalToolDescriptionTrim(source, analysis) {
     const before = tool2.description;
     let after;
     if (tool2.name === "skill") {
-      after = SKILL_TOOL_DESCRIPTION;
+      after = preserveToolEnumerations(before, SKILL_TOOL_DESCRIPTION);
     } else if (tool2.name === "bash") {
       after = "Run a non-interactive shell command. Prefer bounded commands and set timeout for long operations.";
     } else if (tool2.name === "task") {
-      after = "Delegate a bounded task to another agent when it materially helps.";
+      after = preserveToolEnumerations(before, "Delegate a bounded task to another agent when it materially helps.");
     } else {
       after = compactDescription(before, 220);
     }
@@ -975,6 +1096,20 @@ function applyFinalToolDescriptionTrim(source, analysis) {
   return { changed, count, beforeBytes, afterBytes };
 }
 `;
+}
+
+function applyFinalToolDescriptionTrim(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "final-tool-description-trim") === "present") {
+    skipped.push("final request-body tool description trim already present");
+  }
+
+  if (!out.includes("function trimFinalToolDescriptionsForMax(tools) {")) {
+    const helper = trimFinalToolDescriptionsFunction();
+
     out = replaceOnce(
       out,
       "function patchMiniMaxPromptCacheBody(bodyText) {",
@@ -1016,6 +1151,13 @@ function applyFinalToolDescriptionTrim(source, analysis) {
     changed.push("enabled final request-body tool trim");
   }
 
+  // Same upgrade as the definition trim: an older bundle strips enumerations
+  // out of the request body even when the hook above keeps them.
+  if (out.includes("function trimFinalToolDescriptionsForMax(tools) {") && !out.includes("preserveToolEnumerations(before")) {
+    out = replaceFunction(out, "trimFinalToolDescriptionsForMax", trimFinalToolDescriptionsFunction().trimEnd());
+    changed.push("kept tool description enumerations in the request-body trim");
+  }
+
   if (stageStatus(analysis, "request-patcher-test-export") === "present") {
     skipped.push("request patcher test export already present");
   }
@@ -1027,6 +1169,60 @@ function applyFinalToolDescriptionTrim(source, analysis) {
       "transformSystemPrompt"
     );
     changed.push("exported request-body patcher for smoke tests");
+  }
+
+  return { source: out, changed, skipped };
+}
+
+// Insert the ceiling check just before the request-body patcher returns. The
+// bundle shapes differ (the shipped one annotates tools, system and last user
+// through three helpers; the bootstrap writes two), so anchor on the final
+// return rather than on any particular annotation code.
+function insertBreakpointCapCall(source) {
+  const range = findFunctionRange(source, "patchMiniMaxPromptCacheBody");
+  if (!range) return null;
+  const fn = source.slice(range.start, range.end);
+  const anchor = fn.lastIndexOf("\n  return {");
+  if (anchor === -1) return null;
+  const call = [
+    "",
+    "  const cappedBreakpoints = capPromptCacheBreakpoints(parsed);",
+    "  if (cappedBreakpoints > 0) {",
+    "    details.breakpointsRemoved = cappedBreakpoints;",
+    "    changed = true;",
+    "  }"
+  ].join("\n");
+  return `${source.slice(0, range.start)}${fn.slice(0, anchor)}${call}${fn.slice(anchor)}${source.slice(range.end)}`;
+}
+
+function applyCacheBreakpointBudget(source, analysis) {
+  let out = source;
+  const changed = [];
+  const skipped = [];
+
+  if (stageStatus(analysis, "prompt-cache-breakpoint-budget") === "present") {
+    skipped.push("prompt cache breakpoint budget already present");
+    return { source: out, changed, skipped };
+  }
+
+  if (!out.includes("function capPromptCacheBreakpoints(")) {
+    out = replaceOnce(
+      out,
+      "function isMiniMaxPromptCacheTarget(input, init) {",
+      `${promptCacheCapFunction()}function isMiniMaxPromptCacheTarget(input, init) {`,
+      "insert cache breakpoint ceiling"
+    );
+    changed.push("inserted cache breakpoint ceiling");
+  }
+
+  if (!out.includes("const cappedBreakpoints = capPromptCacheBreakpoints(parsed);")) {
+    const capped = insertBreakpointCapCall(out);
+    if (capped === null) {
+      skipped.push("breakpoint cap skipped: request body patcher return not found");
+      return { source: out, changed, skipped };
+    }
+    out = capped;
+    changed.push("capped prompt cache breakpoints at four per request");
   }
 
   return { source: out, changed, skipped };
@@ -1048,7 +1244,14 @@ function applyStages(source) {
     skipped: outputCap.skipped
   });
   const afterOutputCapAnalysis = analyzeBundleSource(outputCap.source);
-  const diagnostics = applyRequestDiagnostics(outputCap.source, afterOutputCapAnalysis);
+  const breakpointBudget = applyCacheBreakpointBudget(outputCap.source, afterOutputCapAnalysis);
+  stages.push({
+    id: "prompt-cache-breakpoint-budget",
+    changed: breakpointBudget.changed,
+    skipped: breakpointBudget.skipped
+  });
+  const afterBreakpointBudgetAnalysis = analyzeBundleSource(breakpointBudget.source);
+  const diagnostics = applyRequestDiagnostics(breakpointBudget.source, afterBreakpointBudgetAnalysis);
   stages.push({
     id: "request-diagnostics",
     changed: diagnostics.changed,
@@ -1092,8 +1295,8 @@ function applyStages(source) {
   const afterAnalysis = analyzeBundleSource(finalTrim.source);
   return {
     source: finalTrim.source,
-    changed: [...outputCap.changed, ...diagnostics.changed, ...requestGuard.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
-    skipped: [...outputCap.skipped, ...diagnostics.skipped, ...requestGuard.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
+    changed: [...outputCap.changed, ...breakpointBudget.changed, ...diagnostics.changed, ...requestGuard.changed, ...toolDefinitionTrim.changed, ...memoryCaps.changed, ...staticPromptCompaction.changed, ...finalTrim.changed],
+    skipped: [...outputCap.skipped, ...breakpointBudget.skipped, ...diagnostics.skipped, ...requestGuard.skipped, ...toolDefinitionTrim.skipped, ...memoryCaps.skipped, ...staticPromptCompaction.skipped, ...finalTrim.skipped],
     stages,
     beforeAnalysis,
     afterAnalysis
@@ -1101,7 +1304,13 @@ function applyStages(source) {
 }
 
 if (!fs.existsSync(target)) {
-  fail(`target file not found: ${target}`);
+  const layout = detectInstallLayout({ bundlePath: target });
+  fail([
+    `target file not found: ${target}`,
+    `install_layout=${layout.layout}`,
+    ...layout.evidence.map((line) => `  ${line}`),
+    ...(layout.message ? [layout.message] : [])
+  ].join("\n"));
 }
 
 // Refuse to write if another process holds the bundle. On Windows the
@@ -1159,11 +1368,23 @@ if (result.changed.length === 0) {
   process.exit(0);
 }
 
+// Refuse to hand MiniMax a file that will not parse. This runs in dry-run too,
+// so a preview reports the problem instead of hiding it until the write.
+const syntax = checkSyntax(result.source);
+if (!syntax.ok) {
+  fail([
+    "patched bundle does not parse; nothing was written",
+    ...syntax.errors.map((line) => `  ${line}`),
+    `target left unchanged: ${target}`
+  ].join("\n"));
+}
+
 const afterHash = sha256(result.source);
 const baseReport = {
   target,
   changed: true,
   dryRun,
+  parsedAs: syntax.parsedAs,
   beforeSha256: beforeHash,
   afterSha256: afterHash,
   beforeClassification: result.beforeAnalysis.classification,

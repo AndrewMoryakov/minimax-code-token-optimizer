@@ -24,6 +24,11 @@ Run:
 
 ```powershell
 node .\scripts\test-patcher.mjs
+node .\scripts\test-bootstrap.mjs
+node .\scripts\test-install-layout.mjs
+node .\scripts\test-plugins.mjs
+node .\scripts\test-config-io.mjs
+node .\scripts\test-cleanup.mjs
 node .\scripts\check-repo.mjs
 node .\scripts\install.mjs --profile max --dry-run
 ```

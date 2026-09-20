@@ -4,7 +4,10 @@ Redistributable scripts, plugins, examples, and documentation for reducing
 MiniMax Code / Mavis token consumption.
 
 This repository is based on a local optimization pass that reduced tiny fresh
-direct-M3 request input from `26147` tokens to `7550` tokens in canary tests.
+direct-M3 request input from `26147` tokens to `7550` tokens in canary tests on
+a **v1** MiniMax Code install. Read "Supported MiniMax Versions" below before
+installing: current MiniMax Code (v2) has no patchable bundle, and the installer
+refuses to touch it.
 
 ## Who This Is For
 
@@ -23,6 +26,40 @@ explains the background, safety model, and manual commands.
 Windows-first, experimental, and actively compatibility-gated. The installer
 backs up files and aborts when expected MiniMax bundle anchors are missing. The
 repo does not ship MiniMax vendor bundles or API keys.
+
+## Supported MiniMax Versions
+
+**This toolkit only applies to v1-era MiniMax Code installs** — the ones that
+ship a patchable OpenCode plugin bundle at
+
+```text
+%LOCALAPPDATA%\Programs\MiniMax Code\resources\resources\daemon\node_modules\@mavis\opencode-plugin\index.js
+```
+
+MiniMax Code v2 (verified on Mavis 3.0.68.134; on 3.0.59 only the absence of
+the bundle was checked) replaced that runtime with `@mavis/local-runtime`
+inside `app.asar`. On such an install:
+
+- the bundle above does not exist, so the patcher has nothing to patch;
+- `@mavis/local-runtime` keeps opencode only as migration code, and its own
+  source says new local sessions no longer use that path;
+- a search of every packed `.js`/`.ts` file in `app.asar` finds no reference to
+  `MAVIS_PROMPT_CACHE_MODE`, `MAVIS_CONTEXT_BUDGET`, `MAVIS_REQUEST_GUARD`,
+  `MAVIS_MINIMAX_MAX_TOKENS`, `opencode.json` or `context-budget/config`, so the
+  standalone plugins, the environment knobs and `policy.json` have no effect.
+
+The installer detects this and refuses, including with `--skip-bundle`: the
+standalone plugins and `policy.json` are inert there, so there is nothing safe
+left to install.
+
+```text
+install_layout=v2-local-runtime
+ERROR: This MiniMax Code install runs the v2 local-runtime (pi-agent).
+```
+
+Do not work around that by passing `--target` at some other file. See
+`docs/MCP_AUDIT_V2_2026-08-28.md` and `docs/V2_ARCHITECTURE_2026-08-28.md` for
+the evidence.
 
 ## Prerequisites
 
@@ -51,8 +88,11 @@ mavis --version
   lifecycle roles.
 - `main session`: the primary chat/coding conversation. This project keeps it
   on direct M3.
-- `lifecycle roles`: helper roles such as `plan`, `build`, `general`,
-  `explore`, and `small`.
+- `lifecycle roles`: keys in the routing table (`plan`, `build`, `general`,
+  `explore`, `small`). Only the ones matching a real Mavis agent take effect.
+  The agent names seen in the Mavis runtime databases are `mavis`, `verifier`,
+  `general`, `explore`, `worker` and `coder`, so `plan`, `build` and `small`
+  entries are inert there; `plan` and `build` come from vanilla OpenCode.
 - `bundle patch`: a guarded edit to the installed local
   `@mavis/opencode-plugin` file. The patcher creates a backup first.
 - `standalone plugins`: extra `.js` plugins copied into the user's Mavis
@@ -65,12 +105,18 @@ mavis --version
 - Routes non-main lifecycle roles to configurable OpenRouter models.
 - Caps direct M3 `max_tokens` to reduce runaway output cost.
 - Shrinks static prompt, memory/profile, skill, MCP, and tool-description
-  payloads in the `max` profile.
+  payloads in the `max` profile. Enumerations inside a tool description, such
+  as the list of agents the `task` tool accepts, are carried over into the
+  shortened description, up to 1200 characters: they are the only place the
+  model learns which values are valid.
 - Adds request diagnostics for `sectionBytes` and `largestTools`.
 - Applies MiniMax prompt-cache markers in enforce mode, while treating cache
   savings as unproven until provider usage reports non-zero cache writes/reads.
 
-## Measured Canary Results
+## Measured Canary Results (v1 only)
+
+These numbers were measured on a v1 install with the bundle patch applied. They
+do not describe MiniMax Code v2, where the patch cannot be applied at all.
 
 | Stage | Input tokens | Body bytes | System bytes | Message bytes | Tool bytes |
 |---|---:|---:|---:|---:|---:|
@@ -335,15 +381,27 @@ The important invariant:
 Main stays direct on `agent.minimax.io`; non-main roles may go through
 OpenRouter.
 
+The plugin fails safe in both directions. If `policy.json` is missing or does
+not parse, `main` stays on direct M3 rather than falling back to OpenRouter. If
+`opencode.json` already names a model, that choice is kept. A routing value
+naming a model the plugin does not register is skipped with a
+`skipped routing entries` warning instead of being handed to OpenCode as an
+unresolvable id.
+
 ## Environment Knobs
 
 ```powershell
 $env:MAVIS_CONTEXT_BUDGET_PROFILE = "max"        # max, medium, free
-$env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe
-$env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override
+$env:MAVIS_PROMPT_CACHE_MODE = "enforce"         # enforce or observe, ceiling of 4 breakpoints
+$env:MAVIS_MINIMAX_MAX_TOKENS = "8192"           # optional override, see note below
 $env:MAVIS_PROMPT_CACHE_OPENROUTER = ""          # default off
 $env:MAVIS_REQUEST_GUARD_MODE = "observe"        # observe, enforce, off
 ```
+
+`MAVIS_MINIMAX_MAX_TOKENS` caps direct M3 output. The cap is never applied below
+`thinking.budget_tokens + 1024` when the request enables thinking: a provider
+rejects `max_tokens` at or below the thinking budget, and a cap with no room
+left after reasoning truncates the tool call the model was writing.
 
 OpenRouter:
 
@@ -385,6 +443,14 @@ Look for:
 - logs include `sectionBytes` and `largestTools`;
 - `tool` section is much smaller than the original 60K+ byte payload.
 
+Prompt cache markers are capped at four `cache_control` breakpoints per request,
+counting markers that are already in the body. Anthropic-compatible endpoints
+reject a fifth one, and both the standalone plugin and the patched bundle add
+markers, so each counts what the other already placed. When the provider does
+reject the markers with a `400` mentioning `cache_control`, the plugin retries
+once without them; any other error, including `429` and `413`, is passed back
+unchanged rather than re-sent.
+
 If `cacheWriteTokens` and `cacheReadTokens` stay at `0`, do not treat that as a
 failed install. The prompt-cache path is still under investigation. The primary
 proven saving is the smaller request context.
@@ -394,6 +460,9 @@ proven saving is the smaller request context.
 If `diagnose-install.mjs` exits with code `2`, read the printed issue list and
 `next_action`. This usually means the patch is not installed yet or the local
 MiniMax bundle is not compatible with the current patcher.
+
+If it prints `install_layout=v2-local-runtime`, stop: that MiniMax version is
+out of scope for this toolkit, and no flag makes it work.
 
 If the patcher says anchors are missing, stop and do not force the patch. That
 MiniMax version needs a compatibility pass.

@@ -27,7 +27,19 @@ export const STAGES = [
     appliedByCurrentPatcher: true,
     markers: [
       ["maxTokenCap8192", "var MINIMAX_DEFAULT_MAX_TOKENS = 8192"],
-      ["maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"]
+      ["maxTokenEnvOverride", "process.env.MAVIS_MINIMAX_MAX_TOKENS"],
+      ["maxTokenThinkingGuard", "function minimaxMaxTokensCap(parsed) {"],
+      ["maxTokenThinkingCall", "const maxTokenCap = minimaxMaxTokensCap(parsed);"]
+    ]
+  },
+  {
+    id: "prompt-cache-breakpoint-budget",
+    label: "Prompt cache breakpoint budget",
+    appliedByCurrentPatcher: true,
+    markers: [
+      ["cacheBreakpointCeiling", "var MINIMAX_MAX_CACHE_BREAKPOINTS = 4;"],
+      ["cacheBreakpointCap", "function capPromptCacheBreakpoints("],
+      ["cacheBreakpointCapCall", "const cappedBreakpoints = capPromptCacheBreakpoints(parsed);"]
     ]
   },
   {
@@ -59,7 +71,7 @@ export const STAGES = [
     markers: [
       ["trimToolDefinitionForMax", "function trimToolDefinitionForMax(input, output) {"],
       ["trimSchemaDescriptionsForMax", "function trimSchemaDescriptionsForMax(value"],
-      ["skillToolShortDescription", "output.description = SKILL_TOOL_DESCRIPTION"],
+      ["toolEnumerationsPreserved", "preserveToolEnumerations(originalDescription"],
       ["toolDefinitionTrimCall", "trimToolDefinitionForMax(input, output);"]
     ]
   },
@@ -70,7 +82,8 @@ export const STAGES = [
     markers: [
       ["trimFinalToolDescriptionsForMax", "function trimFinalToolDescriptionsForMax(tools) {"],
       ["toolDescriptionsTrimmed", "toolDescriptionsTrimmed"],
-      ["finalToolTrimCall", "const finalToolDescriptions = trimFinalToolDescriptionsForMax(parsed.tools);"]
+      ["finalToolTrimCall", "const finalToolDescriptions = trimFinalToolDescriptionsForMax(parsed.tools);"],
+      ["finalToolEnumerationsPreserved", "preserveToolEnumerations(before"]
     ]
   },
   {
